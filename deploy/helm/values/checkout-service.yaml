@@ -1,0 +1,5 @@
+  SPANNER_DATABASE: checkout
+  VALKEY_HOST: VALKEY_PRIVATE_IP
+  CATALOG_URL: http://catalog-service
+  INVENTORY_URL: http://inventory-service
+  PAYMENT_URL: http://payment-service

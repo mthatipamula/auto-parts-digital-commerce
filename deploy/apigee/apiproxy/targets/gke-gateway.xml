@@ -1,0 +1,13 @@
+<TargetEndpoint name="gke-gateway">
+  <PreFlow name="PreFlow">
+    <Request><Step><Name>AM-StripApiKey</Name></Step></Request>
+  </PreFlow>
+  <HTTPTargetConnection>
+    <!-- The GKE gateway behind an internal load balancer, reached over the Apigee X service network (PSC). -->
+    <URL>https://commerce-gateway.internal.example.com/api</URL>
+    <Properties>
+      <Property name="connect.timeout.millis">2000</Property>
+      <Property name="io.timeout.millis">30000</Property>
+    </Properties>
+  </HTTPTargetConnection>
+</TargetEndpoint>

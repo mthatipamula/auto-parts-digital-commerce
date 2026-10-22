@@ -1,0 +1,25 @@
+spring:
+  application.name: inventory-service
+  threads.virtual.enabled: true
+  cloud.gcp:
+    project-id: ${GCP_PROJECT:auto-parts-local}
+    spanner:
+      instance-id: ${SPANNER_INSTANCE:commerce}
+      database: ${SPANNER_DATABASE:inventory}
+      emulator.enabled: ${SPANNER_EMULATOR:true}
+      emulator-host: ${SPANNER_EMULATOR_HOST:localhost:9010}
+    pubsub:
+      emulator-host: ${PUBSUB_EMULATOR_HOST:localhost:8085}
+server:
+  port: ${PORT:8082}
+  shutdown: graceful
+platform:
+  security:
+    issuer: ${OIDC_ISSUER:http://localhost:8180/realms/auto-parts}
+    jwk-set-uri: ${OIDC_JWKS_URI:http://localhost:8180/realms/auto-parts/protocol/openid-connect/certs}
+management:
+  endpoints.web.exposure.include: health,info,prometheus
+  endpoint.health.probes.enabled: true
+  tracing.sampling.probability: 1.0
+  opentelemetry.tracing.export.otlp.endpoint: ${OTLP_TRACES:http://localhost:4318/v1/traces}
+  otlp.metrics.export.url: ${OTLP_METRICS:http://localhost:4318/v1/metrics}

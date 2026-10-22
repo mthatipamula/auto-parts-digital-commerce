@@ -1,0 +1,36 @@
+spring:
+  application.name: catalog-service
+  threads.virtual.enabled: true
+  data.redis:
+    host: ${VALKEY_HOST:localhost}
+    port: ${VALKEY_PORT:6379}
+    timeout: 500ms                         # fail fast; the cache is optional
+  cloud.gcp:
+    project-id: ${GCP_PROJECT:auto-parts-local}
+    spanner:
+      instance-id: ${SPANNER_INSTANCE:commerce}
+      database: ${SPANNER_DATABASE:catalog}
+      emulator.enabled: ${SPANNER_EMULATOR:true}
+      emulator-host: ${SPANNER_EMULATOR_HOST:localhost:9010}
+    storage:
+      enabled: ${GCS_STARTER:false}         # true in GCP; locally StorageConfig points at the emulator
+server:
+  port: ${PORT:8081}
+  shutdown: graceful
+platform:
+  gcs:
+    emulator: ${GCS_EMULATOR:true}
+    emulator-host: ${GCS_HOST:http://localhost:4443}
+  images:
+    bucket: ${IMAGE_BUCKET:auto-parts-product-images}
+    base-url: ${IMAGE_BASE_URL:http://localhost:4443/auto-parts-product-images/}
+  lab.enabled: ${LAB_ENABLED:false}
+  security:
+    issuer: ${OIDC_ISSUER:http://localhost:8180/realms/auto-parts}
+    jwk-set-uri: ${OIDC_JWKS_URI:http://localhost:8180/realms/auto-parts/protocol/openid-connect/certs}
+management:
+  endpoints.web.exposure.include: health,info,prometheus
+  endpoint.health.probes.enabled: true
+  tracing.sampling.probability: 1.0
+  opentelemetry.tracing.export.otlp.endpoint: ${OTLP_TRACES:http://localhost:4318/v1/traces}
+  otlp.metrics.export.url: ${OTLP_METRICS:http://localhost:4318/v1/metrics}

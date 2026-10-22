@@ -1,0 +1,3 @@
+<APIProxy name="commerce-api">
+  <Description>Auto-parts commerce API: storefront, mobile and partner traffic into the GKE gateway</Description>
+</APIProxy>

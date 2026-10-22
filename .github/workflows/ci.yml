@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v5
+        with: { distribution: temurin, java-version: "21" }
+      - uses: gradle/actions/setup-gradle@v5
+      - run: ./gradlew build --no-daemon
+
+  web:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: web } }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with: { node-version: "24", cache: npm, cache-dependency-path: web/package-lock.json }
+      - run: npm ci && npm run build
+
+  infra:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: azure/setup-helm@v4
+      - run: for v in deploy/helm/values/*.yaml; do helm lint deploy/helm/commerce-service -f "$v"; done
+      - uses: hashicorp/setup-terraform@v3
+      - working-directory: deploy/terraform
+        run: terraform fmt -check && terraform init -backend=false && terraform validate
+
+  # The whole platform on GCP emulators (Spanner, Pub/Sub, GCS) + Valkey + Keycloak, then the end-to-end scenarios:
+  # saga, compensation, circuit breaker, CQRS projection, idempotency, security boundaries, rate limiting.
+  e2e:
+    needs: [build, web]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: ./scripts/init-env.sh
+      - run: docker compose up -d --build --wait --wait-timeout 300 gateway catalog-service inventory-service checkout-service payment-service
+      - run: python3 scripts/e2e.py
+      - if: failure()
+        run: docker compose logs --tail=200
+
+  # On main: build images and push to Artifact Registry with keyless auth (GitHub OIDC -> Workload Identity).
+  images:
+    if: github.ref == 'refs/heads/main' && vars.GCP_WORKLOAD_IDENTITY_PROVIDER != ''
+    needs: [e2e, infra]
+    runs-on: ubuntu-latest
+    permissions: { contents: read, id-token: write }
+    strategy:
+      matrix: { module: [gateway, catalog-service, inventory-service, checkout-service, payment-service] }
+    steps:
+      - uses: actions/checkout@v5
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_CI_SERVICE_ACCOUNT }}
+      - run: gcloud auth configure-docker ${{ vars.GCP_REGION }}-docker.pkg.dev --quiet
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          build-args: MODULE=${{ matrix.module }}
+          push: true
+          tags: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/commerce/${{ matrix.module }}:${{ github.sha }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: commerce-service
+description: Reusable chart for every Spring Boot service (one chart, one values file per service)
+type: application
+version: 0.1.0
+appVersion: "0.1.0"

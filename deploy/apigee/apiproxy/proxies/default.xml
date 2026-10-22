@@ -1,0 +1,24 @@
+<ProxyEndpoint name="default">
+  <!-- Order matters: cheap rejections (spike arrest, key) run before anything that costs a backend call. -->
+  <PreFlow name="PreFlow">
+    <Request>
+      <Step><Name>SA-SpikeArrest</Name></Step>
+      <Step><Name>VA-VerifyApiKey</Name></Step>
+      <Step><Name>Q-QuotaPerApp</Name></Step>
+      <Step><Name>CORS-Storefront</Name></Step>
+    </Request>
+  </PreFlow>
+  <Flows>
+    <!-- Internal operations are never exposed through Apigee, even if the gateway changes. -->
+    <Flow name="block-internal">
+      <Condition>(proxy.pathsuffix MatchesPath "/inventory/reservations**") or (proxy.pathsuffix MatchesPath "/payments/**")</Condition>
+      <Request><Step><Name>RF-NotFound</Name></Step></Request>
+    </Flow>
+  </Flows>
+  <HTTPProxyConnection>
+    <BasePath>/commerce/v1</BasePath>
+  </HTTPProxyConnection>
+  <RouteRule name="gke">
+    <TargetEndpoint>gke-gateway</TargetEndpoint>
+  </RouteRule>
+</ProxyEndpoint>

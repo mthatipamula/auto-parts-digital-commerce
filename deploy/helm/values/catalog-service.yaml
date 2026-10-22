@@ -1,0 +1,6 @@
+  SPANNER_DATABASE: catalog
+  VALKEY_HOST: VALKEY_PRIVATE_IP
+  GCS_EMULATOR: "false"
+  GCS_STARTER: "true"
+  IMAGE_BUCKET: PROJECT_ID-product-images
+  IMAGE_BASE_URL: https://storage.googleapis.com/PROJECT_ID-product-images/

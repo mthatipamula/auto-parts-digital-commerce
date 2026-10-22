@@ -1,0 +1,5 @@
+  VALKEY_HOST: VALKEY_PRIVATE_IP
+  CATALOG_URL: http://catalog-service
+  INVENTORY_URL: http://inventory-service
+  CHECKOUT_URL: http://checkout-service
+  PAYMENT_URL: http://payment-service

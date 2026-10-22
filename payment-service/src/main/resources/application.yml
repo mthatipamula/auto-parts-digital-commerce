@@ -1,0 +1,16 @@
+spring:
+  application.name: payment-service
+  threads.virtual.enabled: true
+server:
+  port: ${PORT:8084}
+  shutdown: graceful
+platform:
+  security:
+    issuer: ${OIDC_ISSUER:http://localhost:8180/realms/auto-parts}
+    jwk-set-uri: ${OIDC_JWKS_URI:http://localhost:8180/realms/auto-parts/protocol/openid-connect/certs}
+management:
+  endpoints.web.exposure.include: health,info,prometheus
+  endpoint.health.probes.enabled: true
+  tracing.sampling.probability: 1.0
+  opentelemetry.tracing.export.otlp.endpoint: ${OTLP_TRACES:http://localhost:4318/v1/traces}
+  otlp.metrics.export.url: ${OTLP_METRICS:http://localhost:4318/v1/metrics}
