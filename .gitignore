@@ -1,0 +1,13 @@
+.gradle/
+build/
+node_modules/
+dist/
+.env
+!.env.example
+.idea/
+.vscode/
+*.hprof
+*.jfr
+.terraform/
+*.tfstate*
+.claude/
