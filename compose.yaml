@@ -1,0 +1,119 @@
+# Local stack with GCP emulators. First run: ./scripts/init-env.sh && docker compose up -d --build
+name: auto-parts
+
+x-common: &common
+  OIDC_ISSUER: http://localhost:8180/realms/auto-parts
+  OIDC_JWKS_URI: http://keycloak:8080/realms/auto-parts/protocol/openid-connect/certs
+  OTLP_TRACES: http://otel-lgtm:4318/v1/traces
+  OTLP_METRICS: http://otel-lgtm:4318/v1/metrics
+  GCP_PROJECT: auto-parts-local
+  SPANNER_EMULATOR_HOST: spanner:9010
+  PUBSUB_EMULATOR_HOST: pubsub:8085
+  VALKEY_HOST: valkey
+
+x-health: &health
+  test: ["CMD-SHELL", "bash -c ':> /dev/tcp/localhost/$${PORT}' || exit 1"]
+  interval: 5s
+  timeout: 3s
+  retries: 60
+
+services:
+  spanner:      # Cloud Spanner emulator
+    image: gcr.io/cloud-spanner-emulator/emulator:1.5.59
+    ports: ["127.0.0.1:9010:9010", "127.0.0.1:9020:9020"]
+
+  pubsub:       # Pub/Sub emulator
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:590.0.0-emulators
+    command: ["gcloud", "beta", "emulators", "pubsub", "start", "--host-port=0.0.0.0:8085", "--project=auto-parts-local"]
+    ports: ["127.0.0.1:8085:8085"]
+    healthcheck: { test: ["CMD-SHELL", "curl -sf http://localhost:8085 || exit 1"], interval: 3s, retries: 40 }
+
+  valkey:       # Memorystore for Valkey stand-in
+    image: valkey/valkey:8.1
+    ports: ["127.0.0.1:6379:6379"]
+    healthcheck: { test: ["CMD", "valkey-cli", "ping"], interval: 3s, retries: 20 }
+
+  gcs:          # Cloud Storage emulator
+    image: fsouza/fake-gcs-server:1.56.1
+    command: ["-scheme", "http", "-port", "4443", "-public-host", "localhost:4443", "-external-url", "http://localhost:4443"]
+    ports: ["127.0.0.1:4443:4443"]
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.4
+    command: ["start-dev", "--import-realm", "--http-port=8080", "--hostname=http://localhost:8180", "--hostname-backchannel-dynamic=true", "--health-enabled=true"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?run ./scripts/init-env.sh}
+      WEB_ORIGIN: http://localhost:5173
+      TEST_CLIENT_SECRET: ${TEST_CLIENT_SECRET}
+      DEMO_CUSTOMER_PASSWORD: ${DEMO_CUSTOMER_PASSWORD}
+      DEMO_ASSOCIATE_PASSWORD: ${DEMO_ASSOCIATE_PASSWORD}
+      DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
+    volumes: ["./infra/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro"]
+    ports: ["127.0.0.1:8180:8080"]
+    healthcheck:
+      test: ["CMD-SHELL", "exec 3<>/dev/tcp/localhost/9000 && printf 'GET /health/ready HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q UP <&3"]
+      interval: 5s
+      retries: 40
+
+  otel-lgtm:    # Grafana + Tempo + Prometheus/Mimir + Loki
+    image: grafana/otel-lgtm:0.11.10
+    ports: ["127.0.0.1:3000:3000"]
+
+  catalog-service:
+    build: { context: ., args: { MODULE: catalog-service } }
+    environment:
+      <<: *common
+      PORT: "8081"
+      SPANNER_DATABASE: catalog
+      GCS_HOST: http://gcs:4443
+      IMAGE_BASE_URL: http://localhost:4443/auto-parts-product-images/
+      LAB_ENABLED: "true"
+    depends_on: { spanner: { condition: service_started }, valkey: { condition: service_healthy }, gcs: { condition: service_started }, keycloak: { condition: service_healthy } }
+    healthcheck: *health
+    ports: ["127.0.0.1:8081:8081"]
+
+  inventory-service:
+    build: { context: ., args: { MODULE: inventory-service } }
+    environment: { <<: *common, PORT: "8082", SPANNER_DATABASE: inventory }
+    depends_on: { spanner: { condition: service_started }, pubsub: { condition: service_healthy }, keycloak: { condition: service_healthy } }
+    healthcheck: *health
+    ports: ["127.0.0.1:8082:8082"]
+
+  checkout-service:
+    build: { context: ., args: { MODULE: checkout-service } }
+    environment:
+      <<: *common
+      PORT: "8083"
+      SPANNER_DATABASE: checkout
+      CATALOG_URL: http://catalog-service:8081
+      INVENTORY_URL: http://inventory-service:8082
+      PAYMENT_URL: http://payment-service:8084
+    depends_on: { spanner: { condition: service_started }, pubsub: { condition: service_healthy }, valkey: { condition: service_healthy }, keycloak: { condition: service_healthy } }
+    healthcheck: *health
+    ports: ["127.0.0.1:8083:8083"]
+
+  payment-service:
+    build: { context: ., args: { MODULE: payment-service } }
+    environment: { <<: *common, PORT: "8084" }
+    depends_on: { keycloak: { condition: service_healthy } }
+    healthcheck: *health
+    ports: ["127.0.0.1:8084:8084"]
+
+  gateway:
+    build: { context: ., args: { MODULE: gateway } }
+    environment:
+      <<: *common
+      PORT: "8080"
+      CATALOG_URL: http://catalog-service:8081
+      INVENTORY_URL: http://inventory-service:8082
+      CHECKOUT_URL: http://checkout-service:8083
+      PAYMENT_URL: http://payment-service:8084
+    depends_on: { valkey: { condition: service_healthy }, keycloak: { condition: service_healthy } }
+    healthcheck: *health
+    ports: ["127.0.0.1:8080:8080"]
+
+  web:          # storefront; nginx proxies /api to the gateway (same origin, no CORS)
+    build: { context: ./web }
+    depends_on: [gateway]
+    ports: ["127.0.0.1:5173:8080"]

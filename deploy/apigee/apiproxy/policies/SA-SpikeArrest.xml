@@ -1,0 +1,6 @@
+<SpikeArrest name="SA-SpikeArrest">
+  <!-- Smooths bursts per client IP before they reach the backend. -->
+  <Identifier ref="client.ip"/>
+  <Rate>100ps</Rate>
+  <UseEffectiveCount>true</UseEffectiveCount>
+</SpikeArrest>

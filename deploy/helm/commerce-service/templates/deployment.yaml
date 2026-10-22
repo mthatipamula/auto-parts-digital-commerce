@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "svc.name" . }}
+  labels: {{- include "svc.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  revisionHistoryLimit: 5
+  strategy:
+    type: RollingUpdate
+    rollingUpdate: { maxSurge: 1, maxUnavailable: 0 }     # zero-downtime rollout
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ .Release.Name }} }
+  template:
+    metadata:
+      labels: {{- include "svc.labels" . | nindent 8 }}
+        version: {{ .Values.image.tag | quote }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/path: /actuator/prometheus
+        prometheus.io/port: {{ .Values.port | quote }}
+    spec:
+      serviceAccountName: {{ include "svc.name" . }}
+      terminationGracePeriodSeconds: 45
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001, seccompProfile: { type: RuntimeDefault } }
+      topologySpreadConstraints:           # spread replicas across zones
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app.kubernetes.io/name: {{ .Release.Name }} } }
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ name: http, containerPort: {{ .Values.port }} }]
+          env:
+            - { name: PORT, value: {{ .Values.port | quote }} }
+            {{- range $k, $v := .Values.env }}
+            - { name: {{ $k }}, value: {{ $v | quote }} }
+            {{- end }}
+          startupProbe:  { httpGet: { path: /actuator/health/liveness, port: http }, periodSeconds: 3, failureThreshold: 60 }
+          livenessProbe: { httpGet: { path: /actuator/health/liveness, port: http }, periodSeconds: 10 }
+          readinessProbe: { httpGet: { path: /actuator/health/readiness, port: http }, periodSeconds: 5 }
+          lifecycle:
+            preStop: { exec: { command: ["sh", "-c", "sleep 10"] } }   # let endpoints/mesh drop the pod before shutdown
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: tmp, mountPath: /tmp }
+            - { name: diagnostics, mountPath: /diagnostics }       # GC logs, JFR recordings, heap dumps
+      volumes:
+        - { name: tmp, emptyDir: {} }
+        - { name: diagnostics, emptyDir: { sizeLimit: 2Gi } }

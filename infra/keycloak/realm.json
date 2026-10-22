@@ -1,0 +1,40 @@
+{
+  "realm": "auto-parts",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "bruteForceProtected": true,
+  "accessTokenLifespan": 900,
+  "roles": { "realm": [
+    { "name": "customer", "description": "Shop, check out, see own orders" },
+    { "name": "associate", "description": "Store team member: inventory and any order" },
+    { "name": "admin", "description": "Operations: fault injection, diagnostics" }
+  ] },
+  "clients": [
+    {
+      "clientId": "storefront",
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["${WEB_ORIGIN:http://localhost:5173}/*"],
+      "webOrigins": ["${WEB_ORIGIN:http://localhost:5173}"],
+      "attributes": { "pkce.code.challenge.method": "S256", "post.logout.redirect.uris": "${WEB_ORIGIN:http://localhost:5173}/*" }
+    },
+    {
+      "clientId": "test-harness",
+      "publicClient": false,
+      "secret": "${TEST_CLIENT_SECRET}",
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": true,
+      "serviceAccountsEnabled": false
+    }
+  ],
+  "users": [
+    { "username": "customer", "firstName": "Casey", "lastName": "Customer", "email": "customer@example.test", "emailVerified": true, "enabled": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_CUSTOMER_PASSWORD}", "temporary": false }], "realmRoles": ["customer"] },
+    { "username": "associate", "firstName": "Sam", "lastName": "Associate", "email": "associate@example.test", "emailVerified": true, "enabled": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_ASSOCIATE_PASSWORD}", "temporary": false }], "realmRoles": ["associate", "customer"] },
+    { "username": "admin", "firstName": "Avery", "lastName": "Admin", "email": "admin@example.test", "emailVerified": true, "enabled": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_ADMIN_PASSWORD}", "temporary": false }], "realmRoles": ["admin", "associate", "customer"] }
+  ]
+}

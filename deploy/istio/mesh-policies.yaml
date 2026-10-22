@@ -1,0 +1,105 @@
+# Zero-trust service mesh policies (Istio / Cloud Service Mesh) for namespace "commerce".
+# - STRICT mTLS: every pod-to-pod call is encrypted and the caller's workload identity is verified.
+# - Default deny, then allow only the calls the architecture needs, by service account identity.
+apiVersion: security.istio.io/v1
+kind: PeerAuthentication
+metadata: { name: default, namespace: commerce }
+spec:
+  mtls: { mode: STRICT }
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: deny-by-default, namespace: commerce }
+spec: {}
+---
+# Only the gateway is reachable from the ingress; it may call the public routes of each service.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: gateway-from-ingress, namespace: commerce }
+spec:
+  selector: { matchLabels: { app.kubernetes.io/name: gateway } }
+  action: ALLOW
+  rules:
+    - from: [{ source: { namespaces: [istio-ingress] } }]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: catalog-callers, namespace: commerce }
+spec:
+  selector: { matchLabels: { app.kubernetes.io/name: catalog-service } }
+  action: ALLOW
+  rules:
+    - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/gateway", "cluster.local/ns/commerce/sa/checkout-service"] } }]
+---
+# Reservations are internal: only the checkout service's identity may create or release them.
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: inventory-callers, namespace: commerce }
+spec:
+  selector: { matchLabels: { app.kubernetes.io/name: inventory-service } }
+  action: ALLOW
+  rules:
+    - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/checkout-service"] } }]
+      to: [{ operation: { paths: ["/api/inventory/reservations*"] } }]
+    - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/gateway"] } }]
+      to: [{ operation: { methods: ["GET"], paths: ["/api/inventory/stores", "/api/inventory/availability"] } }]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: checkout-callers, namespace: commerce }
+spec:
+  selector: { matchLabels: { app.kubernetes.io/name: checkout-service } }
+  action: ALLOW
+  rules:
+    - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/gateway"] } }]
+---
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: payment-callers, namespace: commerce }
+spec:
+  selector: { matchLabels: { app.kubernetes.io/name: payment-service } }
+  action: ALLOW
+  rules:
+    - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/checkout-service"] } }]
+      to: [{ operation: { paths: ["/api/payments/authorizations*"] } }]
+    - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/gateway"] } }]
+      to: [{ operation: { paths: ["/api/payments/chaos"] } }]
+---
+# Mesh-level resilience complements Resilience4j in the code: eject unhealthy pods and cap connections.
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata: { name: payment-service, namespace: commerce }
+spec:
+  host: payment-service
+  trafficPolicy:
+    connectionPool:
+      tcp: { maxConnections: 100 }
+      http: { http1MaxPendingRequests: 50, maxRequestsPerConnection: 100 }
+    outlierDetection:            # pod-level circuit breaking
+      consecutive5xxErrors: 5
+      interval: 10s
+      baseEjectionTime: 30s
+      maxEjectionPercent: 50
+---
+apiVersion: networking.istio.io/v1
+kind: DestinationRule
+metadata: { name: inventory-service, namespace: commerce }
+spec:
+  host: inventory-service
+  trafficPolicy:
+    outlierDetection: { consecutive5xxErrors: 5, interval: 10s, baseEjectionTime: 30s, maxEjectionPercent: 50 }
+---
+# Timeouts at the mesh, but no mesh retries for POSTs: the application retries idempotent calls itself, and
+# stacking retries at two layers multiplies load during an outage (retry storms).
+apiVersion: networking.istio.io/v1
+kind: VirtualService
+metadata: { name: catalog-service, namespace: commerce }
+spec:
+  hosts: [catalog-service]
+  http:
+    - match: [{ method: { exact: GET } }]
+      timeout: 2s
+      retries: { attempts: 2, perTryTimeout: 1s, retryOn: "5xx,reset,connect-failure" }
+      route: [{ destination: { host: catalog-service } }]
+    - route: [{ destination: { host: catalog-service } }]
+      timeout: 3s

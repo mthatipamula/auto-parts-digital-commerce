@@ -1,0 +1,18 @@
+image:
+  repository: us-central1-docker.pkg.dev/PROJECT_ID/commerce/checkout-service
+port: 8083
+serviceAccount:
+  gcpServiceAccount: checkout@PROJECT_ID.iam.gserviceaccount.com
+env:
+  GCP_PROJECT: PROJECT_ID
+  SPANNER_EMULATOR: "false"
+  SPANNER_INSTANCE: commerce
+  OIDC_ISSUER: https://auth.example.com/realms/auto-parts
+  OIDC_JWKS_URI: https://auth.example.com/realms/auto-parts/protocol/openid-connect/certs
+  OTLP_TRACES: http://otel-collector.observability:4318/v1/traces
+  OTLP_METRICS: http://otel-collector.observability:4318/v1/metrics
+  SPANNER_DATABASE: checkout
+  VALKEY_HOST: VALKEY_PRIVATE_IP
+  CATALOG_URL: http://catalog-service
+  INVENTORY_URL: http://inventory-service
+  PAYMENT_URL: http://payment-service

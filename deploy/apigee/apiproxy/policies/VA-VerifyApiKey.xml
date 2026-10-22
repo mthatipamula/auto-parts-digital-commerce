@@ -1,0 +1,5 @@
+<VerifyAPIKey name="VA-VerifyApiKey">
+  <!-- Identifies the calling app (storefront, mobile, partner). User identity is the OAuth2 bearer token, which
+       is passed through and validated again by the gateway and every service. -->
+  <APIKey ref="request.header.x-api-key"/>
+</VerifyAPIKey>

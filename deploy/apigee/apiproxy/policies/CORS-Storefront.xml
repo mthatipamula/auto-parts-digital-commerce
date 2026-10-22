@@ -1,0 +1,8 @@
+<CORS name="CORS-Storefront">
+  <AllowOrigins>{request.header.origin}</AllowOrigins>
+  <AllowMethods>GET, PUT, POST, DELETE</AllowMethods>
+  <AllowHeaders>authorization, content-type, idempotency-key, x-api-key</AllowHeaders>
+  <MaxAge>3600</MaxAge>
+  <AllowCredentials>false</AllowCredentials>
+  <GeneratePreflightResponse>true</GeneratePreflightResponse>
+</CORS>

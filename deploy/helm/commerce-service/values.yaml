@@ -1,0 +1,18 @@
+image:
+  repository: REGION-docker.pkg.dev/PROJECT/commerce/SERVICE
+  tag: latest
+  pullPolicy: IfNotPresent
+port: 8080
+replicas: 2
+env: {}
+# Workload Identity: the Kubernetes service account maps to a Google service account (no key files).
+serviceAccount:
+  gcpServiceAccount: ""          # e.g. checkout@PROJECT.iam.gserviceaccount.com
+resources:
+  requests: { cpu: 500m, memory: 1Gi }
+  limits: { memory: 1Gi }        # memory limit = request: no OOM-kill surprises from overcommit
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPU: 65

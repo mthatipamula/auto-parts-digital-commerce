@@ -1,0 +1,3 @@
+project_id        = "your-project-id"
+region            = "us-central1"
+github_repository = "your-github-user/auto-parts-digital-commerce"

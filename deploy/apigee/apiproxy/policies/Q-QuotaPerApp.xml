@@ -1,0 +1,10 @@
+<Quota name="Q-QuotaPerApp" type="calendar">
+  <!-- Per-app quota from the API product (e.g. partners get fewer calls than the first-party storefront). -->
+  <Identifier ref="client_id"/>
+  <Allow count="10000" countRef="verifyapikey.VA-VerifyApiKey.apiproduct.developer.quota.limit"/>
+  <Interval ref="verifyapikey.VA-VerifyApiKey.apiproduct.developer.quota.interval">1</Interval>
+  <TimeUnit ref="verifyapikey.VA-VerifyApiKey.apiproduct.developer.quota.timeunit">hour</TimeUnit>
+  <StartTime>2026-01-01 00:00:00</StartTime>
+  <Distributed>true</Distributed>
+  <Synchronous>false</Synchronous>
+</Quota>

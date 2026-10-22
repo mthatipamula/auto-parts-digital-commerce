@@ -1,0 +1,9 @@
+<RaiseFault name="RF-NotFound">
+  <FaultResponse>
+    <Set>
+      <StatusCode>404</StatusCode>
+      <Payload contentType="application/problem+json">{"title":"Not found","status":404}</Payload>
+    </Set>
+  </FaultResponse>
+  <IgnoreUnresolvedVariables>true</IgnoreUnresolvedVariables>
+</RaiseFault>
