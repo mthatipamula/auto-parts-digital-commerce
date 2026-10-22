@@ -1,8 +1,8 @@
 image:
-  repository: us-central1-docker.pkg.dev/PROJECT_ID/commerce/gateway 8080 gateway
-port: 
+  repository: us-central1-docker.pkg.dev/PROJECT_ID/commerce/payment-service
+port: 8084
 serviceAccount:
-  gcpServiceAccount: @PROJECT_ID.iam.gserviceaccount.com
+  gcpServiceAccount: payment@PROJECT_ID.iam.gserviceaccount.com
 env:
   GCP_PROJECT: PROJECT_ID
   SPANNER_EMULATOR: "false"
@@ -10,3 +10,4 @@ env:
   OIDC_ISSUER: https://auth.example.com/realms/auto-parts
   OIDC_JWKS_URI: https://auth.example.com/realms/auto-parts/protocol/openid-connect/certs
   OTLP_TRACES: http://otel-collector.observability:4318/v1/traces
+  OTLP_METRICS: http://otel-collector.observability:4318/v1/metrics
