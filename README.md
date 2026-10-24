@@ -109,7 +109,19 @@ Then sign in as `jordan` and order more than $750 on account (declined), and as 
 
 ## Deploy to GCP
 
-`deploy/terraform` (GKE Autopilot, Spanner, Memorystore for Valkey via PSC, GCS, Pub/Sub with DLQ, Artifact Registry,
-per-service Google service accounts with Workload Identity, keyless GitHub OIDC), then `helm upgrade --install` each
-service with `deploy/helm/values/<service>.yaml`, apply `deploy/istio`, and import `deploy/apigee` into an Apigee X
-org. These create billable resources; size and delete accordingly.
+`deploy/terraform` creates GKE Autopilot (private nodes + Cloud NAT), Spanner, Memorystore for Valkey via PSC, GCS,
+Pub/Sub with DLQ, Artifact Registry, per-service Google service accounts with Workload Identity and keyless GitHub OIDC.
+Then `scripts/gcp-deploy.sh` builds every image on Cloud Build, loads the demo secrets from `.env` into a Kubernetes
+Secret, and deploys Keycloak, Grafana (`deploy/k8s`), the six services (Helm, `deploy/helm/values/gcp-demo.yaml` sizes
+them for a demo) and the storefront. `scripts/gcp-connect.sh` opens it on the same localhost ports as the local stack, so
+the PKCE sign-in and `scripts/e2e.py` work unchanged against the cloud.
+
+```bash
+terraform -chdir=deploy/terraform apply -var project_id=$PROJECT_ID -var github_repository=OWNER/auto-parts-digital-commerce
+PROJECT_ID=$PROJECT_ID ./scripts/gcp-deploy.sh
+./scripts/gcp-connect.sh            # then http://localhost:5173, or python3 scripts/e2e.py in another terminal
+```
+
+Not in the demo deploy: the Istio policies (`deploy/istio`, needs Cloud Service Mesh) and Apigee (`deploy/apigee`, needs an
+Apigee org). A public deploy would add a domain, a managed certificate and an Ingress for the storefront and Keycloak.
+These create billable resources (roughly $12/day as sized); delete the project when done.

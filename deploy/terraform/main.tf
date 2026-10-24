@@ -13,19 +13,20 @@ provider "google" {
 
 locals {
   services = {
-    gateway   = { roles = [] }
-    catalog   = { roles = ["roles/spanner.databaseUser", "roles/storage.objectAdmin"] }
-    inventory = { roles = ["roles/spanner.databaseUser", "roles/pubsub.subscriber"] }
-    checkout  = { roles = ["roles/spanner.databaseUser", "roles/pubsub.publisher", "roles/pubsub.subscriber"] }
+    gateway = { roles = [] }
+    # spanner.viewer lets a service see whether its schema exists yet (SpannerSetup applies it on first start).
+    catalog   = { roles = ["roles/spanner.databaseUser", "roles/spanner.viewer", "roles/storage.objectAdmin"] }
+    inventory = { roles = ["roles/spanner.databaseUser", "roles/spanner.viewer", "roles/pubsub.subscriber"] }
+    checkout  = { roles = ["roles/spanner.databaseUser", "roles/spanner.viewer", "roles/pubsub.publisher", "roles/pubsub.subscriber"] }
     payment   = { roles = [] }
-    account   = { roles = ["roles/spanner.databaseUser", "roles/pubsub.subscriber"] }
+    account   = { roles = ["roles/spanner.databaseUser", "roles/spanner.viewer", "roles/pubsub.subscriber"] }
   }
   k8s_sa = {
     gateway  = "gateway", catalog = "catalog-service", inventory = "inventory-service",
     checkout = "checkout-service", payment = "payment-service", account = "account-service"
   }
   apis = ["container.googleapis.com", "spanner.googleapis.com", "memorystore.googleapis.com", "pubsub.googleapis.com",
-    "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "compute.googleapis.com",
+    "storage.googleapis.com", "artifactregistry.googleapis.com", "cloudbuild.googleapis.com", "iam.googleapis.com", "iamcredentials.googleapis.com", "compute.googleapis.com",
   "networkconnectivity.googleapis.com", "serviceconsumermanagement.googleapis.com"]
 }
 
@@ -48,6 +49,21 @@ resource "google_compute_subnetwork" "gke" {
   network                  = google_compute_network.vpc.id
   ip_cidr_range            = "10.20.0.0/20"
   private_ip_google_access = true
+}
+
+# Private nodes have no public IPs: Cloud NAT gives them outbound access to pull public images (Keycloak, Grafana).
+resource "google_compute_router" "nat" {
+  name    = "commerce-nat"
+  network = google_compute_network.vpc.id
+  region  = var.region
+}
+
+resource "google_compute_router_nat" "nat" {
+  name                               = "commerce-nat"
+  router                             = google_compute_router.nat.name
+  region                             = var.region
+  nat_ip_allocate_option             = "AUTO_ONLY"
+  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
 }
 
 # ---------------------------------------------------------------- GKE Autopilot (Workload Identity on by default)

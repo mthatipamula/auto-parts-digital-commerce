@@ -15,7 +15,7 @@ import java.util.concurrent.ExecutionException;
 
 /**
  * Creates the Spanner instance (emulator only) and the service's database and schema if they don't exist.
- * In GCP the instance comes from Terraform; databases and schema are created here on first start.
+ * In GCP the instance and (empty) databases come from Terraform; the schema is applied here on first start.
  * Schema changes after that would go through a migration tool (e.g. Liquibase's Spanner extension).
  */
 public class SpannerSetup {
@@ -36,7 +36,8 @@ public class SpannerSetup {
 
     public void ensure(List<String> ddl) {
         if (emulator) createEmulatorInstance();
-        if (admin.databaseExists()) return;
+        // Terraform creates GCP databases empty, so "exists" is not enough: apply the schema until it has tables.
+        if (admin.databaseExists() && !admin.getTables().isEmpty()) return;
         admin.executeDdlStrings(ddl, true);
         log.info("Created Spanner database with {} DDL statements", ddl.size());
     }

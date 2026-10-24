@@ -1,0 +1,51 @@
+# Storefront (nginx + built React app). IMAGE is filled in by scripts/gcp-deploy.sh.
+# nginx proxies /api to the gateway in-cluster (same origin, no CORS); config.js points the app at Keycloak.
+apiVersion: v1
+kind: ConfigMap
+metadata: { name: web-config, namespace: commerce }
+data:
+  default.conf: |
+    server {
+      listen 8080;
+      root /usr/share/nginx/html;
+      add_header X-Content-Type-Options nosniff always;
+      add_header Referrer-Policy no-referrer always;
+      # Re-resolve the gateway through cluster DNS so a redeployed gateway doesn't leave a stale IP behind.
+      resolver kube-dns.kube-system.svc.cluster.local valid=10s ipv6=off;
+      set $gateway http://gateway.commerce.svc.cluster.local;
+      location /api/ { proxy_pass $gateway; proxy_read_timeout 60s; }
+      location = /config.js { add_header Cache-Control "no-store"; }
+      location /assets/ { add_header Cache-Control "public, max-age=31536000, immutable"; }
+      location / { try_files $uri /index.html; }
+    }
+  config.js: |
+    window.__CONFIG__ = { oidcAuthority: 'http://localhost:8180/realms/auto-parts', oidcClientId: 'storefront' };
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: web, namespace: commerce, labels: { app.kubernetes.io/name: web } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: web } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: web } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: nginx
+          image: IMAGE
+          ports: [{ name: http, containerPort: 8080 }]
+          readinessProbe: { httpGet: { path: /, port: http }, periodSeconds: 5 }
+          resources: { requests: { cpu: 250m, memory: 256Mi }, limits: { memory: 256Mi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          volumeMounts:
+            - { name: config, mountPath: /etc/nginx/conf.d/default.conf, subPath: default.conf }
+            - { name: config, mountPath: /usr/share/nginx/html/config.js, subPath: config.js }
+      volumes: [{ name: config, configMap: { name: web-config } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: web, namespace: commerce }
+spec:
+  selector: { app.kubernetes.io/name: web }
+  ports: [{ name: http, port: 80, targetPort: http }]
