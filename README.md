@@ -113,15 +113,18 @@ Then sign in as `jordan` and order more than $750 on account (declined), and as 
 Pub/Sub with DLQ, Artifact Registry, per-service Google service accounts with Workload Identity and keyless GitHub OIDC.
 Then `scripts/gcp-deploy.sh` builds every image on Cloud Build, loads the demo secrets from `.env` into a Kubernetes
 Secret, and deploys Keycloak, Grafana (`deploy/k8s`), the six services (Helm, `deploy/helm/values/gcp-demo.yaml` sizes
-them for a demo) and the storefront. `scripts/gcp-connect.sh` opens it on the same localhost ports as the local stack, so
-the PKCE sign-in and `scripts/e2e.py` work unchanged against the cloud.
+them for a demo) and the storefront behind a GKE Ingress (global HTTPS load balancer, Google-managed certificate). The
+storefront's nginx serves the app and proxies `/api` and the sign-in, so one public URL, `https://<lb-ip>.sslip.io`
+(wildcard DNS for the load balancer's IP, so no domain is needed), covers everything. The certificate takes 15–60 minutes
+the first time.
 
 ```bash
 terraform -chdir=deploy/terraform apply -var project_id=$PROJECT_ID -var github_repository=OWNER/auto-parts-digital-commerce
-PROJECT_ID=$PROJECT_ID ./scripts/gcp-deploy.sh
-./scripts/gcp-connect.sh            # then http://localhost:5173, or python3 scripts/e2e.py in another terminal
+PROJECT_ID=$PROJECT_ID ./scripts/gcp-deploy.sh      # prints the storefront URL
+E2E_BASE_URL=https://<lb-ip>.sslip.io python3 scripts/e2e.py
+./scripts/gcp-connect.sh                            # Grafana on localhost:3000 (not public)
 ```
 
 Not in the demo deploy: the Istio policies (`deploy/istio`, needs Cloud Service Mesh) and Apigee (`deploy/apigee`, needs an
-Apigee org). A public deploy would add a domain, a managed certificate and an Ingress for the storefront and Keycloak.
+Apigee org). For production: a real domain, Cloud Armor on the load balancer, and Keycloak backed by a database.
 These create billable resources (roughly $12/day as sized); delete the project when done.

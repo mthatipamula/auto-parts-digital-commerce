@@ -2,16 +2,20 @@
 """End-to-end checks through the gateway, exactly as a client would call it. Reads demo passwords from .env."""
 
 import json
+import os
 import sys
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-GW = "http://localhost:8080"
-KC = "http://localhost:8180/realms/auto-parts/protocol/openid-connect/token"
+# Local stack by default; E2E_BASE_URL=https://<host> tests a GCP deployment (one origin serves /api and the sign-in).
+_base = os.environ.get("E2E_BASE_URL", "").rstrip("/")
+GW = _base or "http://localhost:8080"
+KC = (_base or "http://localhost:8180") + "/realms/auto-parts/protocol/openid-connect/token"
 env = dict(l.split("=", 1) for l in Path(".env").read_text().splitlines() if "=" in l and not l.startswith("#"))
 ok = True
 
@@ -110,7 +114,12 @@ sa, after, _ = call("GET", f"/api/inventory/availability?storeId={store}&skus={p
 if sa != 200:
     print("availability call failed:", sa, after)
 check("stock committed via OrderConfirmed event", after[pads] == before[pads] - 1 and after[oil] == before[oil] - 2, f"{before} -> {after}")
-s, hist, _ = call("GET", "/api/orders", cust)
+# The read model is eventually consistent (outbox -> Pub/Sub -> projection): poll briefly rather than assume a delay.
+for _ in range(20):
+    s, hist, _ = call("GET", "/api/orders", cust)
+    if any(o["orderId"] == order["orderId"] and o["status"] == "CONFIRMED" for o in hist):
+        break
+    time.sleep(1)
 check("CQRS order history (Valkey read model)", any(o["orderId"] == order["orderId"] and o["status"] == "CONFIRMED" for o in hist), f"{len(hist)} orders")
 
 # ---------------------------------------------------------------- out of stock
@@ -152,8 +161,12 @@ q = {x["sku"]: x for x in quote}
 check("contract price beats tier discount", q["BRK-PAD-1001"]["netPriceCents"] == 3499 and q["BRK-PAD-1001"]["rule"] == "Contract price")
 check("tier discount on non-contract part", q["FLT-OIL-3001"]["netPriceCents"] < q["FLT-OIL-3001"]["listPriceCents"], q["FLT-OIL-3001"]["rule"])
 
+# Order the contract part where it's best stocked, so repeated runs (which consume demo stock) keep working.
+_, all_stores, _ = call("GET", "/api/inventory/stores")
+pad_store = max((x["storeId"] for x in all_stores),
+                key=lambda sid: call("GET", f"/api/inventory/availability?storeId={sid}&skus=BRK-PAD-1001")[1].get("BRK-PAD-1001", 0))
 call("DELETE", "/api/cart", rick); call("PUT", "/api/cart/items/BRK-PAD-1001", rick, {"quantity": 2})
-s, o, _ = call("POST", "/api/orders", rick, {"storeId": store, "fulfillment": "DELIVERY", "paymentMethod": "ACCOUNT", "poNumber": "RA-4471"},
+s, o, _ = call("POST", "/api/orders", rick, {"storeId": pad_store, "fulfillment": "DELIVERY", "paymentMethod": "ACCOUNT", "poNumber": "RA-4471"},
                {"Idempotency-Key": str(uuid.uuid4())})
 check("charge to account with PO -> CONFIRMED at net price", s == 200 and o["status"] == "CONFIRMED" and o["totalCents"] == 2 * 3499
       and o["terms"]["poNumber"] == "RA-4471", [x["step"] + ":" + x["outcome"] for x in o.get("steps", [])])
@@ -206,7 +219,9 @@ s, _, _ = call("GET", "/api/cart")
 check("cart requires sign-in", s == 401, s)
 
 # ---------------------------------------------------------------- rate limiting
-codes = [call("GET", "/api/catalog/categories")[0] for _ in range(70)]
+# Concurrent, so the burst exceeds the bucket (40 tokens, refill 20/s) even with internet latency per call.
+with ThreadPoolExecutor(max_workers=35) as pool:
+    codes = list(pool.map(lambda _: call("GET", "/api/catalog/categories")[0], range(80)))
 check("gateway rate limit (token bucket in Valkey)", 429 in codes, f"{codes.count(200)} x 200, {codes.count(429)} x 429")
 
 sys.exit(0 if ok else 1)

@@ -6,8 +6,7 @@ resources:
   requests: { cpu: 500m, memory: 1Gi }
   limits: { memory: 1Gi }
 env:
-  # Keycloak runs in the cluster and is reached through `kubectl port-forward` on localhost:8180, the same as the
-  # local stack: the browser's PKCE flow needs a secure context (https or localhost), and this demo has no domain/TLS.
-  # Tokens carry that issuer; services fetch signing keys from Keycloak's in-cluster address.
-  OIDC_ISSUER: http://localhost:8180/realms/auto-parts
+  # Tokens carry the public issuer (PUBLIC_URL is filled in by scripts/gcp-deploy.sh); services fetch signing keys
+  # from Keycloak's in-cluster address.
+  OIDC_ISSUER: PUBLIC_URL/realms/auto-parts
   OIDC_JWKS_URI: http://keycloak.commerce.svc.cluster.local:8080/realms/auto-parts/protocol/openid-connect/certs

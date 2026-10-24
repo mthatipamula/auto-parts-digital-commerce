@@ -14,12 +14,13 @@ spec:
       containers:
         - name: keycloak
           image: quay.io/keycloak/keycloak:26.4
-          args: ["start-dev", "--import-realm", "--http-port=8080", "--hostname=http://localhost:8180", "--hostname-backchannel-dynamic=true", "--health-enabled=true"]
+          # Browsers reach Keycloak at PUBLIC_URL (through the storefront's nginx); services fetch keys in-cluster.
+          args: ["start-dev", "--import-realm", "--http-port=8080", "--hostname=PUBLIC_URL", "--hostname-backchannel-dynamic=true", "--proxy-headers=xforwarded", "--health-enabled=true"]
           envFrom: [{ secretRef: { name: demo-secrets } }]
           env:
             - { name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin }
             - { name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: demo-secrets, key: KEYCLOAK_ADMIN_PASSWORD } } }
-            - { name: WEB_ORIGIN, value: "http://localhost:5173" }
+            - { name: WEB_ORIGIN, value: "PUBLIC_URL" }
           ports: [{ name: http, containerPort: 8080 }, { name: mgmt, containerPort: 9000 }]
           startupProbe: { httpGet: { path: /health/started, port: mgmt }, periodSeconds: 5, failureThreshold: 60 }
           readinessProbe: { httpGet: { path: /health/ready, port: mgmt }, periodSeconds: 10 }

@@ -146,6 +146,13 @@ resource "google_storage_bucket" "images" {
   }
 }
 
+# The catalog seeder checks the bucket exists before uploading images; objectAdmin alone can't read bucket metadata.
+resource "google_storage_bucket_iam_member" "images_catalog_bucket_reader" {
+  bucket = google_storage_bucket.images.name
+  role   = "roles/storage.legacyBucketReader"
+  member = "serviceAccount:${google_service_account.svc["catalog"].email}"
+}
+
 resource "google_storage_bucket_iam_member" "images_public" {
   bucket = google_storage_bucket.images.name
   role   = "roles/storage.objectViewer"
@@ -216,6 +223,7 @@ resource "google_service_account_iam_member" "workload_identity" {
   service_account_id = google_service_account.svc[each.key].name
   role               = "roles/iam.workloadIdentityUser"
   member             = "serviceAccount:${var.project_id}.svc.id.goog[commerce/${local.k8s_sa[each.key]}]"
+  depends_on         = [google_container_cluster.gke] # the PROJECT.svc.id.goog pool exists only once the cluster does
 }
 
 # ---------------------------------------------------------------- images + keyless CI
