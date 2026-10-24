@@ -30,3 +30,14 @@ table { width:100%; border-collapse:collapse; } th, td { text-align:left; paddin
 .order.confirmed { border-color:var(--ok); } .order.rejected, .order.payment_failed, .order.failed { border-color:var(--bad); }
 label { display:flex; flex-direction:column; gap:3px; font-size:12px; color:var(--muted); } .store { flex-direction:row; }
 @media (max-width:700px) { main, .top { padding-left:16px; padding-right:16px; } .store { margin-left:0; } .ymm select { min-width:0; flex:1; } }
+
+/* Pro (B2B) */
+.pro-badge { margin-left:10px; font-size:11px; font-weight:700; letter-spacing:.03em; padding:3px 8px; border-radius:99px; background:var(--text); color:var(--surface); vertical-align:middle; }
+.pro-rule { color:var(--ok); } tr.savings td { color:var(--ok); font-weight:600; }
+.terms { display:grid; gap:12px; margin:14px 0; } .terms fieldset { border:1px solid var(--border); border-radius:8px; padding:8px 12px; margin:0; display:grid; gap:6px; }
+.terms legend { font-size:12px; color:var(--muted); padding:0 4px; } .po { display:grid; gap:4px; font-size:13px; } .po input { max-width:260px; }
+.notice.warn { background:var(--warn-bg); color:var(--warn); } .low { color:var(--bad); font-weight:600; }
+.stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; margin-bottom:16px; }
+.stat { background:var(--surface); border:1px solid var(--border); border-radius:10px; padding:12px 14px; } .stat .v { font-size:22px; font-weight:700; margin-top:2px; }
+.meter { height:8px; border-radius:99px; background:var(--s2); overflow:hidden; display:flex; gap:2px; margin:8px 0 4px; }
+.meter span { display:block; height:100%; } .meter .bal { background:var(--text); } .meter .hold { background:var(--warn); }

@@ -5,11 +5,11 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 docker compose restart spanner
 docker compose exec -T valkey valkey-cli FLUSHALL >/dev/null
-docker compose restart catalog-service inventory-service checkout-service payment-service gateway
+docker compose restart catalog-service inventory-service checkout-service payment-service account-service gateway
 echo "Waiting for services..."
 for i in $(seq 1 60); do
   n=$(docker compose ps --format '{{.Status}}' | grep -c "(healthy)" || true)
-  [[ "$n" -ge 9 ]] && break
+  [[ "$n" -ge 10 ]] && break
   sleep 3
 done
 sleep 5

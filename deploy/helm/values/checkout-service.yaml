@@ -16,3 +16,4 @@ env:
   CATALOG_URL: http://catalog-service
   INVENTORY_URL: http://inventory-service
   PAYMENT_URL: http://payment-service
+  ACCOUNT_URL: http://account-service

@@ -49,6 +49,9 @@ services:
       DEMO_CUSTOMER_PASSWORD: ${DEMO_CUSTOMER_PASSWORD}
       DEMO_ASSOCIATE_PASSWORD: ${DEMO_ASSOCIATE_PASSWORD}
       DEMO_ADMIN_PASSWORD: ${DEMO_ADMIN_PASSWORD}
+      DEMO_RICK_PASSWORD: ${DEMO_RICK_PASSWORD}
+      DEMO_JORDAN_PASSWORD: ${DEMO_JORDAN_PASSWORD}
+      DEMO_MIKE_PASSWORD: ${DEMO_MIKE_PASSWORD}
     volumes: ["./infra/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro"]
     ports: ["127.0.0.1:8180:8080"]
     healthcheck:
@@ -89,6 +92,7 @@ services:
       CATALOG_URL: http://catalog-service:8081
       INVENTORY_URL: http://inventory-service:8082
       PAYMENT_URL: http://payment-service:8084
+      ACCOUNT_URL: http://account-service:8085
     depends_on: { spanner: { condition: service_started }, pubsub: { condition: service_healthy }, valkey: { condition: service_healthy }, keycloak: { condition: service_healthy } }
     healthcheck: *health
     ports: ["127.0.0.1:8083:8083"]
@@ -100,6 +104,13 @@ services:
     healthcheck: *health
     ports: ["127.0.0.1:8084:8084"]
 
+  account-service:   # Pro (B2B) accounts: membership, contract/tier pricing, credit holds
+    build: { context: ., args: { MODULE: account-service } }
+    environment: { <<: *common, PORT: "8085", SPANNER_DATABASE: accounts, CATALOG_URL: http://catalog-service:8081 }
+    depends_on: { spanner: { condition: service_started }, pubsub: { condition: service_healthy }, keycloak: { condition: service_healthy } }
+    healthcheck: *health
+    ports: ["127.0.0.1:8086:8085"]
+
   gateway:
     build: { context: ., args: { MODULE: gateway } }
     environment:
@@ -109,6 +120,7 @@ services:
       INVENTORY_URL: http://inventory-service:8082
       CHECKOUT_URL: http://checkout-service:8083
       PAYMENT_URL: http://payment-service:8084
+      ACCOUNT_URL: http://account-service:8085
     depends_on: { valkey: { condition: service_healthy }, keycloak: { condition: service_healthy } }
     healthcheck: *health
     ports: ["127.0.0.1:8080:8080"]

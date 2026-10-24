@@ -24,6 +24,7 @@ platform:
     catalog: ${CATALOG_URL:http://localhost:8081}
     inventory: ${INVENTORY_URL:http://localhost:8082}
     payment: ${PAYMENT_URL:http://localhost:8084}
+    account: ${ACCOUNT_URL:http://localhost:8085}
   security:
     issuer: ${OIDC_ISSUER:http://localhost:8180/realms/auto-parts}
     jwk-set-uri: ${OIDC_JWKS_URI:http://localhost:8180/realms/auto-parts/protocol/openid-connect/certs}
@@ -48,6 +49,7 @@ resilience4j:
       catalog: { base-config: default }
       inventory: { base-config: default }
       payment: { base-config: default, slow-call-duration-threshold: 3s }
+      account: { base-config: default }
   retry:
     configs:
       default:
@@ -62,6 +64,7 @@ resilience4j:
       catalog: { base-config: default }
       inventory: { base-config: default }
       payment: { base-config: default }
+      account: { base-config: default }
   bulkhead:
     configs:
       default:
@@ -71,6 +74,7 @@ resilience4j:
       catalog: { base-config: default }
       inventory: { base-config: default }
       payment: { base-config: default, max-concurrent-calls: 10 }
+      account: { base-config: default }
 
 management:
   endpoints.web.exposure.include: health,info,prometheus,circuitbreakers

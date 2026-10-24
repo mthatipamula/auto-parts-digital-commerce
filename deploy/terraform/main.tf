@@ -18,10 +18,11 @@ locals {
     inventory = { roles = ["roles/spanner.databaseUser", "roles/pubsub.subscriber"] }
     checkout  = { roles = ["roles/spanner.databaseUser", "roles/pubsub.publisher", "roles/pubsub.subscriber"] }
     payment   = { roles = [] }
+    account   = { roles = ["roles/spanner.databaseUser", "roles/pubsub.subscriber"] }
   }
   k8s_sa = {
     gateway  = "gateway", catalog = "catalog-service", inventory = "inventory-service",
-    checkout = "checkout-service", payment = "payment-service"
+    checkout = "checkout-service", payment = "payment-service", account = "account-service"
   }
   apis = ["container.googleapis.com", "spanner.googleapis.com", "memorystore.googleapis.com", "pubsub.googleapis.com",
     "storage.googleapis.com", "artifactregistry.googleapis.com", "iamcredentials.googleapis.com", "compute.googleapis.com",
@@ -78,7 +79,7 @@ resource "google_spanner_instance" "commerce" {
 }
 
 resource "google_spanner_database" "db" {
-  for_each                 = toset(["catalog", "inventory", "checkout"])
+  for_each                 = toset(["catalog", "inventory", "checkout", "accounts"])
   instance                 = google_spanner_instance.commerce.name
   name                     = each.value
   deletion_protection      = true
@@ -148,7 +149,7 @@ resource "google_pubsub_topic" "dead_letter" {
 }
 
 resource "google_pubsub_subscription" "consumers" {
-  for_each                = toset(["inventory.order-events", "checkout.order-history"])
+  for_each                = toset(["inventory.order-events", "checkout.order-history", "account.order-events"])
   name                    = each.value
   topic                   = google_pubsub_topic.order_events.id
   enable_message_ordering = true

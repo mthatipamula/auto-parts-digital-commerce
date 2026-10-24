@@ -2,8 +2,16 @@
 # Creates .env with random local passwords (only if missing). Values are never printed.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-if [[ -f .env ]]; then echo ".env already exists; leaving it alone."; exit 0; fi
 gen() { openssl rand -base64 24 | tr -dc 'A-Za-z0-9' | head -c 24; }
+if [[ -f .env ]]; then
+  # Add any keys introduced since .env was created (e.g. the Pro demo users), without touching existing ones.
+  added=0
+  for key in DEMO_RICK_PASSWORD DEMO_JORDAN_PASSWORD DEMO_MIKE_PASSWORD; do
+    grep -q "^$key=" .env || { echo "$key=$(gen)" >> .env; added=$((added + 1)); }
+  done
+  echo ".env already exists; added $added new key(s)."
+  exit 0
+fi
 umask 077
 cat > .env <<ENV
 KEYCLOAK_ADMIN_PASSWORD=$(gen)
@@ -11,5 +19,8 @@ TEST_CLIENT_SECRET=$(gen)
 DEMO_CUSTOMER_PASSWORD=$(gen)
 DEMO_ASSOCIATE_PASSWORD=$(gen)
 DEMO_ADMIN_PASSWORD=$(gen)
+DEMO_RICK_PASSWORD=$(gen)
+DEMO_JORDAN_PASSWORD=$(gen)
+DEMO_MIKE_PASSWORD=$(gen)
 ENV
-echo "Wrote .env (demo users: customer / associate / admin)."
+echo "Wrote .env (demo users: customer / associate / admin; Pro: rick / jordan / mike)."

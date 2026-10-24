@@ -46,6 +46,19 @@ def call(method, path, tok=None, body=None, headers=None):
             return e.code, raw.decode()[:200], dict(e.headers)
 
 
+def big_order(tok, over_cents):
+    """A cart line the store can fill whose Pro net total exceeds over_cents, so the saga reaches the credit check."""
+    _, all_parts, _ = call("GET", "/api/catalog/parts")
+    skus = [p["sku"] for p in all_parts]
+    _, avail, _ = call("GET", f"/api/inventory/availability?storeId={store}&" + "&".join(f"skus={x}" for x in skus))
+    _, net, _ = call("POST", "/api/accounts/me/quote", tok, {"skus": skus})
+    for line in sorted(net, key=lambda x: -x["netPriceCents"] * avail.get(x["sku"], 0)):
+        qty = over_cents // line["netPriceCents"] + 1
+        if qty <= avail.get(line["sku"], 0):
+            return line["sku"], qty
+    raise SystemExit(f"no part at {store} has enough stock to exceed ${over_cents/100:.2f}")
+
+
 # ---------------------------------------------------------------- preconditions (a previous run may have left the
 # payment circuit open and the rate-limit bucket empty)
 _admin = token("admin")
@@ -127,6 +140,62 @@ check("payment circuit breaker OPEN, later calls fail fast", pay["circuit"] == "
       f"state={pay['circuit']} failureRate={pay['failureRate']} notPermitted={pay['notPermittedCalls']}")
 call("PUT", "/api/payments/chaos", admin, {"failureRate": 0, "latencyMs": 0})
 call("DELETE", "/api/cart", cust)
+
+# ---------------------------------------------------------------- Pro (B2B) accounts
+rick, jordan, mike = token("rick"), token("jordan"), token("mike")
+_, me_mike, _ = call("GET", "/api/accounts/me", mike)
+s, me, _ = call("GET", "/api/accounts/me", rick)
+check("Pro user resolves to their commercial account", s == 200 and me["account"]["name"] == "Rick's Automotive" and me["member"]["role"] == "OWNER",
+      f"{me['account']['id']} {me['account']['tier']} {me['credit']['terms']} available=${me['credit']['availableCents']/100:.2f}")
+s, quote, _ = call("POST", "/api/accounts/me/quote", rick, {"skus": ["BRK-PAD-1001", "FLT-OIL-3001"]})
+q = {x["sku"]: x for x in quote}
+check("contract price beats tier discount", q["BRK-PAD-1001"]["netPriceCents"] == 3499 and q["BRK-PAD-1001"]["rule"] == "Contract price")
+check("tier discount on non-contract part", q["FLT-OIL-3001"]["netPriceCents"] < q["FLT-OIL-3001"]["listPriceCents"], q["FLT-OIL-3001"]["rule"])
+
+call("DELETE", "/api/cart", rick); call("PUT", "/api/cart/items/BRK-PAD-1001", rick, {"quantity": 2})
+s, o, _ = call("POST", "/api/orders", rick, {"storeId": store, "fulfillment": "DELIVERY", "paymentMethod": "ACCOUNT", "poNumber": "RA-4471"},
+               {"Idempotency-Key": str(uuid.uuid4())})
+check("charge to account with PO -> CONFIRMED at net price", s == 200 and o["status"] == "CONFIRMED" and o["totalCents"] == 2 * 3499
+      and o["terms"]["poNumber"] == "RA-4471", [x["step"] + ":" + x["outcome"] for x in o.get("steps", [])])
+time.sleep(2)
+_, me2, _ = call("GET", "/api/accounts/me", rick)
+check("credit hold captured into open balance", me2["credit"]["openBalanceCents"] == me["credit"]["openBalanceCents"] + o["totalCents"]
+      and me2["credit"]["onHoldCents"] == 0, f"balance ${me['credit']['openBalanceCents']/100:.2f} -> ${me2['credit']['openBalanceCents']/100:.2f}")
+
+sku, qty = big_order(jordan, 75000)
+call("DELETE", "/api/cart", jordan); call("PUT", f"/api/cart/items/{sku}", jordan, {"quantity": qty})
+s, o, _ = call("POST", "/api/orders", jordan, {"storeId": store, "paymentMethod": "ACCOUNT"}, {"Idempotency-Key": str(uuid.uuid4())})
+check("buyer over their purchase limit -> declined", o.get("status") == "PAYMENT_FAILED" and "purchase limit" in (o.get("failureReason") or ""),
+      o.get("failureReason"))
+time.sleep(1)
+s, team, _ = call("GET", "/api/orders?scope=account", rick)
+check("owner sees orders placed by the whole account", any(x.get("placedBy") == "jordan" for x in team) and any(x.get("placedBy") == "rick" for x in team),
+      f"{len(team)} orders")
+s, _, _ = call("GET", "/api/orders?scope=account", jordan)
+check("buyer cannot see account-wide history", s == 403, s)
+
+sku, qty = big_order(mike, me_mike["credit"]["availableCents"])
+_, mb, _ = call("GET", f"/api/inventory/availability?storeId={store}&skus={sku}")
+call("DELETE", "/api/cart", mike); call("PUT", f"/api/cart/items/{sku}", mike, {"quantity": qty})
+s, o, _ = call("POST", "/api/orders", mike, {"storeId": store, "paymentMethod": "ACCOUNT"}, {"Idempotency-Key": str(uuid.uuid4())})
+steps = [x["step"] + ":" + x["outcome"] for x in o.get("steps", [])]
+check("over available credit -> declined, stock released", o.get("status") == "PAYMENT_FAILED" and "Credit limit" in (o.get("failureReason") or "")
+      and "RELEASE_STOCK:OK" in steps, o.get("failureReason"))
+_, ma, _ = call("GET", f"/api/inventory/availability?storeId={store}&skus={sku}")
+check("availability restored after credit decline", ma == mb, f"{mb} -> {ma}")
+for u in (rick, jordan, mike):
+    call("DELETE", "/api/cart", u)
+
+call("PUT", f"/api/cart/items/{pads}", cust, {"quantity": 1})
+s, _, _ = call("POST", "/api/orders", cust, {"storeId": store, "paymentMethod": "ACCOUNT"}, {"Idempotency-Key": str(uuid.uuid4())})
+check("retail customer cannot charge to account", s == 403, s)
+call("DELETE", "/api/cart", cust)
+s, _, _ = call("GET", "/api/accounts/me", cust)
+check("retail customer has no Pro account access", s == 403, s)
+s, accts, _ = call("GET", "/api/accounts", admin)
+check("staff see all Pro accounts with credit", s == 200 and len(accts) >= 2, [a["account"]["name"] if "account" in a else a.get("name") for a in accts] if s == 200 else s)
+s, _, _ = call("POST", "/api/accounts/me/credit-holds", rick, {"orderId": "x", "amountCents": 1})
+check("internal credit-hold API not routed by the gateway", s in (401, 403, 404), s)
 
 # ---------------------------------------------------------------- security boundaries
 s, _, _ = call("POST", "/api/inventory/reservations", cust, {"orderId": "x", "storeId": store, "items": [{"sku": pads, "quantity": 1}]})

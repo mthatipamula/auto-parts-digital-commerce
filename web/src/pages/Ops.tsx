@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, type Dependency } from '../api';
+import { api, money, type Account, type Credit, type Dependency } from '../api';
 
 /** Live resilience view: circuit breakers and bulkheads in the checkout service, and the payment fault switch. */
 export default function Ops() {
@@ -8,6 +8,8 @@ export default function Ops() {
   const [active, setActive] = useState<{ failureRate: number; latencyMs: number } | null>(null);
   const [saved, setSaved] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [accounts, setAccounts] = useState<{ account: Account; credit: Credit; members: number }[]>([]);
+  useEffect(() => { api<typeof accounts>('/api/accounts').then(setAccounts).catch(() => {}); }, []);
   const load = () => api<Dependency[]>('/api/checkout/dependencies').then(setDeps).catch((e) => setError(e.message));
   useEffect(() => { load(); const t = setInterval(load, 2000); return () => clearInterval(t); }, []);
   useEffect(() => {  // what the payment service is actually using right now
@@ -27,7 +29,7 @@ export default function Ops() {
 
   return (
     <div className="page narrow">
-      <h1>Ops: resilience</h1>
+      <h1>Ops</h1>
       {error && <div className="notice error">{error}</div>}
       <div className="card"><table>
         <thead><tr><th>Dependency</th><th>Circuit</th><th className="num">Failure rate</th><th className="num">Calls in window</th><th className="num">Rejected fast</th><th className="num">Bulkhead free</th><th className="num">Retried</th></tr></thead>
@@ -36,6 +38,19 @@ export default function Ops() {
             <td className="num">{d.failureRate < 0 ? '—' : `${d.failureRate.toFixed(0)}%`}</td><td className="num">{d.bufferedCalls}</td><td className="num">{d.notPermittedCalls}</td>
             <td className="num">{d.bulkheadAvailable}</td><td className="num">{d.retriedCalls}</td></tr>))}</tbody>
       </table></div>
+      <div className="card">
+        <h2>Pro accounts</h2>
+        <table>
+          <thead><tr><th>Account</th><th>Tier</th><th>Terms</th><th className="num">Users</th><th className="num">Credit limit</th><th className="num">Open balance</th><th className="num">On hold</th><th className="num">Available</th><th>Status</th></tr></thead>
+          <tbody>{accounts.map(({ account: a, credit: c, members }) => (
+            <tr key={a.id}><td><strong>{a.name}</strong><div className="small muted">{a.id} · {a.type.toLowerCase()} · home {a.homeStoreId}</div></td>
+              <td>{a.tier}</td><td>{c.terms.replace('NET', 'Net ')}</td><td className="num">{members}</td><td className="num">{money(c.limitCents)}</td>
+              <td className="num">{money(c.openBalanceCents)}</td><td className="num">{money(c.onHoldCents)}</td>
+              <td className="num"><span className={c.availableCents < c.limitCents * 0.2 ? 'low' : ''}>{money(c.availableCents)}</span></td>
+              <td><span className={`tag ${a.status === 'ACTIVE' ? 'confirmed' : 'payment_failed'}`}>{a.status === 'ACTIVE' ? '● Active' : `■ ${a.status}`}</span></td></tr>))}
+            {accounts.length === 0 && <tr><td colSpan={9} className="muted">No Pro accounts.</td></tr>}</tbody>
+        </table>
+      </div>
       <div className="card">
         <h2>Payment fault injection (admin only)</h2>
         {active && <p className="small">Currently active: <strong>{Math.round(active.failureRate * 100)}% failures</strong>, <strong>{active.latencyMs} ms</strong> added latency</p>}

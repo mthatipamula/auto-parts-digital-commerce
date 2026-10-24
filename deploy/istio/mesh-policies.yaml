@@ -65,6 +65,20 @@ spec:
     - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/gateway"] } }]
       to: [{ operation: { paths: ["/api/payments/chaos"] } }]
 ---
+# Pro accounts: the gateway may read the account and request quotes; only checkout may place or release credit holds,
+# and only through the caller's own token (the service checks the user is a member of the account).
+apiVersion: security.istio.io/v1
+kind: AuthorizationPolicy
+metadata: { name: account-callers, namespace: commerce }
+spec:
+  selector: { matchLabels: { app.kubernetes.io/name: account-service } }
+  action: ALLOW
+  rules:
+    - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/checkout-service"] } }]
+      to: [{ operation: { paths: ["/api/accounts/me", "/api/accounts/me/quote", "/api/accounts/me/credit-holds*"] } }]
+    - from: [{ source: { principals: ["cluster.local/ns/commerce/sa/gateway"] } }]
+      to: [{ operation: { methods: ["GET"], paths: ["/api/accounts", "/api/accounts/me"] } }, { operation: { methods: ["POST"], paths: ["/api/accounts/me/quote"] } }]
+---
 # Mesh-level resilience complements Resilience4j in the code: eject unhealthy pods and cap connections.
 apiVersion: networking.istio.io/v1
 kind: DestinationRule

@@ -10,6 +10,7 @@ COPY catalog-service catalog-service
 COPY inventory-service inventory-service
 COPY checkout-service checkout-service
 COPY payment-service payment-service
+COPY account-service account-service
 RUN --mount=type=cache,target=/root/.gradle,sharing=locked ./gradlew :${MODULE}:bootJar -x test --no-daemon -q \
     && cp ${MODULE}/build/libs/${MODULE}-*[0-9].jar /app.jar \
     && java -Djarmode=tools -jar /app.jar extract --layers --launcher --destination /layers

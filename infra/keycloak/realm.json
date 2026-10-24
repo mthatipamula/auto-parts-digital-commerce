@@ -7,6 +7,7 @@
   "accessTokenLifespan": 900,
   "roles": { "realm": [
     { "name": "customer", "description": "Shop, check out, see own orders" },
+    { "name": "pro", "description": "Commercial (B2B) buyer: account pricing, charge to account, delivery" },
     { "name": "associate", "description": "Store team member: inventory and any order" },
     { "name": "admin", "description": "Operations: fault injection, diagnostics" }
   ] },
@@ -30,6 +31,12 @@
     }
   ],
   "users": [
+    { "id": "0f6b1c3a-1d2e-4c5b-9a01-7e1c0b0a1001", "username": "rick", "firstName": "Rick", "lastName": "Owner", "email": "rick@ricks-automotive.example.test", "emailVerified": true, "enabled": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_RICK_PASSWORD}", "temporary": false }], "realmRoles": ["pro"] },
+    { "id": "0f6b1c3a-1d2e-4c5b-9a01-7e1c0b0a1002", "username": "jordan", "firstName": "Jordan", "lastName": "Technician", "email": "jordan@ricks-automotive.example.test", "emailVerified": true, "enabled": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_JORDAN_PASSWORD}", "temporary": false }], "realmRoles": ["pro"] },
+    { "id": "0f6b1c3a-1d2e-4c5b-9a01-7e1c0b0a2001", "username": "mike", "firstName": "Mike", "lastName": "Mechanic", "email": "mike@mobile-mechanic.example.test", "emailVerified": true, "enabled": true,
+      "credentials": [{ "type": "password", "value": "${DEMO_MIKE_PASSWORD}", "temporary": false }], "realmRoles": ["pro"] },
     { "username": "customer", "firstName": "Casey", "lastName": "Customer", "email": "customer@example.test", "emailVerified": true, "enabled": true,
       "credentials": [{ "type": "password", "value": "${DEMO_CUSTOMER_PASSWORD}", "temporary": false }], "realmRoles": ["customer"] },
     { "username": "associate", "firstName": "Sam", "lastName": "Associate", "email": "associate@example.test", "emailVerified": true, "enabled": true,
