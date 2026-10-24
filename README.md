@@ -109,22 +109,250 @@ Then sign in as `jordan` and order more than $750 on account (declined), and as 
 
 ## Deploy to GCP
 
-`deploy/terraform` creates GKE Autopilot (private nodes + Cloud NAT), Spanner, Memorystore for Valkey via PSC, GCS,
-Pub/Sub with DLQ, Artifact Registry, per-service Google service accounts with Workload Identity and keyless GitHub OIDC.
-Then `scripts/gcp-deploy.sh` builds every image on Cloud Build, loads the demo secrets from `.env` into a Kubernetes
-Secret, and deploys Keycloak, Grafana (`deploy/k8s`), the six services (Helm, `deploy/helm/values/gcp-demo.yaml` sizes
-them for a demo) and the storefront behind a GKE Ingress (global HTTPS load balancer, Google-managed certificate). The
-storefront's nginx serves the app and proxies `/api` and the sign-in, so one public URL, `https://<lb-ip>.sslip.io`
-(wildcard DNS for the load balancer's IP, so no domain is needed), covers everything. The certificate takes 15–60 minutes
-the first time.
+The same stack, on managed GCP services, behind one public HTTPS URL. Verified end to end: `scripts/e2e.py` passes all
+31 checks against the deployment.
 
-```bash
-terraform -chdir=deploy/terraform apply -var project_id=$PROJECT_ID -var github_repository=OWNER/auto-parts-digital-commerce
-PROJECT_ID=$PROJECT_ID ./scripts/gcp-deploy.sh      # prints the storefront URL
-E2E_BASE_URL=https://<lb-ip>.sslip.io python3 scripts/e2e.py
-./scripts/gcp-connect.sh                            # Grafana on localhost:3000 (not public)
+```
+Browser ── https://<lb-ip>.sslip.io ──► GKE Ingress (global HTTPS LB, Google-managed certificate, HTTP→HTTPS redirect)
+                                          │
+                                          ▼
+                              storefront nginx ── /          → React app
+                                               ├─ /api/      → gateway → services
+                                               └─ /realms/   → Keycloak (sign-in; admin console not exposed)
+
+GKE Autopilot (private nodes, Cloud NAT) ── namespace commerce: gateway, catalog, inventory, checkout, payment, account,
+                                            Keycloak, storefront · namespace observability: Grafana LGTM
+  each service ── own Kubernetes SA ⇄ own Google SA (Workload Identity, no key files)
+     ├── Spanner (instance commerce; databases catalog, inventory, checkout, accounts)
+     ├── Memorystore for Valkey (private PSC endpoint)
+     ├── Pub/Sub topic order-events (+ DLQ) and one subscription per consumer
+     └── Cloud Storage bucket <project>-product-images (public read)
+Images: Cloud Build → Artifact Registry (<region>-docker.pkg.dev/<project>/commerce)
 ```
 
-Not in the demo deploy: the Istio policies (`deploy/istio`, needs Cloud Service Mesh) and Apigee (`deploy/apigee`, needs an
-Apigee org). For production: a real domain, Cloud Armor on the load balancer, and Keycloak backed by a database.
-These create billable resources (roughly $12/day as sized); delete the project when done.
+| What | Where |
+|---|---|
+| Infrastructure | `deploy/terraform` (GKE, Spanner, Valkey, Pub/Sub, GCS, Artifact Registry, NAT, IAM, GitHub OIDC) |
+| Image build | `cloudbuild.yaml` (all 6 services + storefront, built on Cloud Build as linux/amd64) |
+| Services | `deploy/helm/commerce-service` + `deploy/helm/values/<service>.yaml` + `gcp-demo.yaml` (demo sizing, public issuer) |
+| Keycloak, Grafana, storefront, Ingress, certificate | `deploy/k8s/` |
+| Build + deploy everything | `scripts/gcp-deploy.sh` (idempotent; safe to rerun) |
+| Grafana tunnel | `scripts/gcp-connect.sh` |
+
+### Prerequisites
+
+- A Google account with a billing account (`gcloud billing accounts list` shows it with `OPEN True`).
+- `gcloud`, `terraform` (≥ 1.9), `kubectl`, `helm`, and the GKE auth plugin:
+
+```bash
+brew install helm terraform kubectl
+gcloud components install gke-gcloud-auth-plugin
+```
+
+- `.env` from `./scripts/init-env.sh`. The deploy copies these demo passwords into a Kubernetes Secret; they are never
+  printed and never uploaded with the build source (`.gcloudignore`).
+
+### 1. Create the project and link billing
+
+Project IDs are unique across all of Google Cloud, permanently. If `gcloud projects create` says the ID is in use, or
+later commands say you "do not have permission to access projects instance", pick another ID. The display name can stay
+the same.
+
+```bash
+export PROJECT_ID=autoparts-digital-commerce REGION=us-central1
+gcloud projects create $PROJECT_ID --name="auto-parts-digital-commerce"
+gcloud billing projects link $PROJECT_ID --billing-account=XXXXXX-XXXXXX-XXXXXX
+gcloud config set project $PROJECT_ID
+```
+
+### 2. Credentials for Terraform
+
+```bash
+gcloud auth application-default login
+gcloud auth application-default set-quota-project $PROJECT_ID
+```
+
+### 3. Enable the APIs
+
+Terraform enables these too; doing it first avoids ordering races on a brand-new project.
+
+```bash
+gcloud services enable serviceusage.googleapis.com cloudresourcemanager.googleapis.com iam.googleapis.com \
+  compute.googleapis.com container.googleapis.com spanner.googleapis.com memorystore.googleapis.com \
+  pubsub.googleapis.com storage.googleapis.com artifactregistry.googleapis.com cloudbuild.googleapis.com \
+  iamcredentials.googleapis.com networkconnectivity.googleapis.com serviceconsumermanagement.googleapis.com
+```
+
+### 4. Create the infrastructure (about 20–25 minutes)
+
+```bash
+terraform -chdir=deploy/terraform init
+terraform -chdir=deploy/terraform apply -var project_id=$PROJECT_ID -var region=$REGION \
+  -var github_repository=OWNER/auto-parts-digital-commerce
+```
+
+State is kept locally in `deploy/terraform` (gitignored). For a team, add a GCS backend.
+
+### 5. Let Cloud Build push images and write logs
+
+Cloud Build runs as the Compute Engine default service account in new projects.
+
+```bash
+PROJECT_NUMBER=$(gcloud projects describe $PROJECT_ID --format='value(projectNumber)')
+for r in roles/artifactregistry.writer roles/logging.logWriter roles/storage.objectViewer; do
+  gcloud projects add-iam-policy-binding $PROJECT_ID --condition=None -q \
+    --member="serviceAccount:${PROJECT_NUMBER}-compute@developer.gserviceaccount.com" --role=$r >/dev/null
+done
+```
+
+### 6. Build and deploy (about 5 minutes to build, 10 to roll out)
+
+```bash
+PROJECT_ID=$PROJECT_ID REGION=$REGION ./scripts/gcp-deploy.sh
+```
+
+In order, the script:
+
+1. builds the 7 images on Cloud Build, tagged with the git commit (`TAG=…` overrides it);
+2. fetches cluster credentials and finds the Valkey endpoint from the Terraform outputs;
+3. creates the `commerce` namespace, the `demo-secrets` Secret (from `.env`) and the Keycloak realm ConfigMap;
+4. creates the Ingress and waits for its IP, then derives `PUBLIC_URL=https://<ip-with-dashes>.sslip.io`;
+5. deploys Grafana and Keycloak (with `PUBLIC_URL` as its hostname), then the six services with Helm, one at a time,
+   each waiting until ready;
+6. deploys the storefront (nginx config and `config.js` pointing at `PUBLIC_URL`), then requests the managed
+   certificate and attaches it to the Ingress.
+
+It ends by printing the storefront URL.
+
+### 7. Wait for the certificate (15–60 minutes, first time only)
+
+HTTPS does not work until the certificate is `Active`. HTTP already redirects to HTTPS.
+
+```bash
+kubectl -n commerce get managedcertificate web-cert -o jsonpath='{.status.certificateStatus}{"\n"}'
+```
+
+HTTPS is required, not just nice to have: the PKCE sign-in uses the browser's Web Crypto API, which only exists on HTTPS
+pages (and on `localhost`), and passwords and bearer tokens must not cross the internet unencrypted. A certificate needs a
+hostname, which is why the URL uses [sslip.io](https://sslip.io) (wildcard DNS that resolves `1-2-3-4.sslip.io` to
+`1.2.3.4`) rather than the bare IP. With your own domain, point an A record at the Ingress IP and use that name in
+`deploy/k8s/certificate.yaml` and the `PUBLIC_URL` derivation in the script.
+
+### 8. Verify
+
+Open the printed URL on any device and sign in as `customer`, `rick`, `jordan`, `mike`, `associate` or `admin`
+(passwords in `.env`). Then run the full suite against the cloud:
+
+```bash
+E2E_BASE_URL=https://<ip-with-dashes>.sslip.io python3 scripts/e2e.py      # 31 checks
+```
+
+Grafana (traces across gateway → checkout → inventory / payment / account) is not public:
+
+```bash
+./scripts/gcp-connect.sh      # then http://localhost:3000
+```
+
+Useful checks:
+
+```bash
+kubectl -n commerce get pods
+kubectl -n commerce logs deploy/checkout-service --tail=100
+gcloud spanner databases ddl describe catalog --instance=commerce
+gcloud storage ls gs://$PROJECT_ID-product-images/categories/
+```
+
+### Redeploying
+
+| Change | Command |
+|---|---|
+| Java or web code | `TAG=<new-tag> PROJECT_ID=$PROJECT_ID ./scripts/gcp-deploy.sh` (or commit first; the default tag is the commit hash) |
+| Only Kubernetes / Helm / nginx config | `SKIP_BUILD=1 TAG=<current-tag> PROJECT_ID=$PROJECT_ID ./scripts/gcp-deploy.sh` |
+| Terraform | `terraform -chdir=deploy/terraform apply …` with the same `-var`s as step 4 |
+
+Always use a new tag after a code change. The pods reuse an image they already have for the same tag, so rebuilding under
+the old tag leaves them running the old code. Don't edit `gcp-deploy.sh` while it is running: bash reads the file as it
+goes.
+
+### Cost
+
+As sized, about **$11–14/day** (us-central1 list prices; check Billing → Reports for actuals):
+
+| Item | ≈ per day |
+|---|---|
+| GKE Autopilot pods (9 pods, about 4.75 vCPU and 9.75 GiB requested) | $6.20 |
+| GKE cluster fee (covered by the free-tier credit for one cluster per billing account) | $0 – 2.40 |
+| Spanner, 100 processing units | $2.20 |
+| Memorystore for Valkey, shared-core nano, primary + replica | $1.50 – 2.00 |
+| HTTPS load balancer | $0.60 |
+| Cloud NAT | $0.25 |
+| Artifact Registry, Cloud Build (about $0.06 per build), Logging, Pub/Sub, GCS | < $0.10 |
+
+Pause the pods between demos (saves about $6/day; Spanner, Valkey, the load balancer and NAT keep billing), then bring
+them back with a `SKIP_BUILD=1` redeploy:
+
+```bash
+kubectl scale deployment --all --replicas=0 -n commerce && kubectl scale deployment --all --replicas=0 -n observability
+```
+
+Optional budget alert (alerts only; it does not stop spending):
+
+```bash
+gcloud billing budgets create --billing-account=XXXXXX-XXXXXX-XXXXXX --display-name="$PROJECT_ID" \
+  --budget-amount=100USD --filter-projects=projects/$PROJECT_ID \
+  --threshold-rule=percent=0.5 --threshold-rule=percent=0.9 --threshold-rule=percent=1.0
+```
+
+To stop all charges, tear it down (see [Teardown](#teardown) at the end).
+
+### Troubleshooting (seen on a real first deploy)
+
+| Symptom | Cause and fix |
+|---|---|
+| `does not have permission to access projects instance` on billing link | The project ID belongs to someone else, so your create failed. Use another ID. |
+| Terraform: `Identity Pool does not exist (PROJECT.svc.id.goog)` | That pool appears only once the GKE cluster exists. The bindings now depend on the cluster; rerun `apply`. |
+| Service in `CrashLoopBackOff` with `Table not found` | Terraform creates the databases empty, and the services apply their schema on first start. Fixed in `SpannerSetup`; redeploy with a new tag. |
+| Images 404, catalog log says `storage.buckets.get` denied | The catalog SA needs bucket metadata read (granted in Terraform). `apply`, then `kubectl -n commerce rollout restart deployment/catalog-service`. |
+| Helm `context deadline exceeded` | A pod didn't become ready within 10 minutes: `kubectl -n commerce logs deploy/<service> --previous`. |
+| HTTPS doesn't load | The certificate is still `Provisioning` (step 7). |
+| e2e: order history or rate limit fails | Over the internet, the read model trails by a few seconds, and sequential calls are too slow to drain the token bucket. The suite polls and sends a concurrent burst. |
+
+### Not in the demo deploy
+
+- The Istio policies (`deploy/istio`) need Cloud Service Mesh enabled on the cluster.
+- Apigee (`deploy/apigee`) needs an Apigee organization.
+- For production: a real domain, Cloud Armor on the load balancer, Keycloak (or another IdP) backed by a database,
+  2+ replicas per service (the chart defaults), and a remote Terraform state backend.
+- `.github/workflows/ci.yml` can push images keylessly once `GCP_WORKLOAD_IDENTITY_PROVIDER`, `GCP_CI_SERVICE_ACCOUNT`,
+  `GCP_PROJECT_ID` and `GCP_REGION` are set as repository variables (values from `terraform output`).
+
+### Teardown
+
+Deleting the project stops all billing for it and removes everything: GKE, Spanner, Valkey, the load balancer and
+certificate, NAT, Pub/Sub, the buckets, Artifact Registry images and service accounts. Deletion protection on GKE,
+Spanner and Valkey only blocks `terraform destroy`; it does not block deleting the project.
+
+```bash
+gcloud projects delete $PROJECT_ID
+```
+
+Confirm it's gone (state `DELETE_REQUESTED`) and that billing is unlinked:
+
+```bash
+gcloud projects describe $PROJECT_ID --format="value(lifecycleState)"
+gcloud billing projects describe $PROJECT_ID --format="value(billingEnabled)"
+```
+
+The project can be restored for 30 days (`gcloud projects undelete $PROJECT_ID`), but its resources are shut down
+immediately, and its ID can never be reused, even after the 30 days.
+
+Clean up the local references, so a later deploy starts fresh in a new project:
+
+```bash
+rm -f deploy/terraform/terraform.tfstate deploy/terraform/terraform.tfstate.backup
+kubectl config delete-context gke_${PROJECT_ID}_${REGION}_commerce
+gcloud config unset project
+gcloud auth application-default revoke
+```
+
+To deploy again later, start from step 1 with a new project ID.
