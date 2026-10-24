@@ -1,0 +1,28 @@
+# Public HTTPS entry: GKE Ingress (global external Application Load Balancer) -> storefront nginx, which proxies /api
+# and the sign-in paths. GKE assigns the IP; scripts/gcp-deploy.sh then derives the hostname <ip>.sslip.io (public
+# wildcard DNS that resolves to that IP) and attaches a Google-managed certificate for it (deploy/k8s/certificate.yaml).
+# The IP stays the same across redeploys; it changes only if this Ingress is deleted.
+apiVersion: v1
+kind: Service
+metadata: { name: web, namespace: commerce }
+spec:
+  selector: { app.kubernetes.io/name: web }
+  ports: [{ name: http, port: 80, targetPort: http }]
+---
+apiVersion: networking.gke.io/v1beta1
+kind: FrontendConfig
+metadata: { name: web-frontend, namespace: commerce }
+spec:
+  redirectToHttps: { enabled: true }
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: web
+  namespace: commerce
+  annotations:
+    kubernetes.io/ingress.class: gce
+    networking.gke.io/v1beta1.FrontendConfig: web-frontend
+spec:
+  defaultBackend:
+    service: { name: web, port: { number: 80 } }

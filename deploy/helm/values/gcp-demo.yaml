@@ -1,0 +1,12 @@
+# Demo-sized overrides for a personal GCP project, layered on top of each service's values file by scripts/gcp-deploy.sh.
+# Production keeps the chart defaults (2+ replicas spread across zones, HPA up to 10).
+replicas: 1
+autoscaling: { enabled: true, minReplicas: 1, maxReplicas: 3, targetCPU: 65 }
+resources:
+  requests: { cpu: 500m, memory: 1Gi }
+  limits: { memory: 1Gi }
+env:
+  # Tokens carry the public issuer (PUBLIC_URL is filled in by scripts/gcp-deploy.sh); services fetch signing keys
+  # from Keycloak's in-cluster address.
+  OIDC_ISSUER: PUBLIC_URL/realms/auto-parts
+  OIDC_JWKS_URI: http://keycloak.commerce.svc.cluster.local:8080/realms/auto-parts/protocol/openid-connect/certs

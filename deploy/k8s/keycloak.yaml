@@ -1,0 +1,37 @@
+# Demo identity provider: Keycloak in dev mode, realm imported from infra/keycloak/realm.json (ConfigMap `keycloak-realm`)
+# with demo passwords from the `demo-secrets` Secret (created from .env by scripts/gcp-deploy.sh).
+# Production would use a managed IdP or Keycloak with a database, TLS and a real hostname.
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: keycloak, namespace: commerce, labels: { app.kubernetes.io/name: keycloak } }
+spec:
+  replicas: 1
+  selector: { matchLabels: { app.kubernetes.io/name: keycloak } }
+  template:
+    metadata: { labels: { app.kubernetes.io/name: keycloak } }
+    spec:
+      securityContext: { runAsNonRoot: true, seccompProfile: { type: RuntimeDefault } }
+      containers:
+        - name: keycloak
+          image: quay.io/keycloak/keycloak:26.4
+          # Browsers reach Keycloak at PUBLIC_URL (through the storefront's nginx); services fetch keys in-cluster.
+          args: ["start-dev", "--import-realm", "--http-port=8080", "--hostname=PUBLIC_URL", "--hostname-backchannel-dynamic=true", "--proxy-headers=xforwarded", "--health-enabled=true"]
+          envFrom: [{ secretRef: { name: demo-secrets } }]
+          env:
+            - { name: KC_BOOTSTRAP_ADMIN_USERNAME, value: admin }
+            - { name: KC_BOOTSTRAP_ADMIN_PASSWORD, valueFrom: { secretKeyRef: { name: demo-secrets, key: KEYCLOAK_ADMIN_PASSWORD } } }
+            - { name: WEB_ORIGIN, value: "PUBLIC_URL" }
+          ports: [{ name: http, containerPort: 8080 }, { name: mgmt, containerPort: 9000 }]
+          startupProbe: { httpGet: { path: /health/started, port: mgmt }, periodSeconds: 5, failureThreshold: 60 }
+          readinessProbe: { httpGet: { path: /health/ready, port: mgmt }, periodSeconds: 10 }
+          resources: { requests: { cpu: "1", memory: 1536Mi }, limits: { memory: 1536Mi } }
+          securityContext: { allowPrivilegeEscalation: false, capabilities: { drop: [ALL] } }
+          volumeMounts: [{ name: realm, mountPath: /opt/keycloak/data/import, readOnly: true }]
+      volumes: [{ name: realm, configMap: { name: keycloak-realm } }]
+---
+apiVersion: v1
+kind: Service
+metadata: { name: keycloak, namespace: commerce }
+spec:
+  selector: { app.kubernetes.io/name: keycloak }
+  ports: [{ name: http, port: 8080, targetPort: http }]

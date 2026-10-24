@@ -1,0 +1,50 @@
+# Builds every service image plus the storefront on Cloud Build (amd64, no local Docker needed) and pushes them
+# to Artifact Registry. Used by scripts/gcp-deploy.sh:
+#   gcloud builds submit --config cloudbuild.yaml --substitutions=_REGISTRY=REGION-docker.pkg.dev/PROJECT/commerce,_TAG=abc123
+steps:
+  - id: gateway
+    name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    args: ["build", "--build-arg", "MODULE=gateway", "-t", "${_REGISTRY}/gateway:${_TAG}", "."]
+    waitFor: ["-"]
+  - id: catalog-service
+    name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    args: ["build", "--build-arg", "MODULE=catalog-service", "-t", "${_REGISTRY}/catalog-service:${_TAG}", "."]
+    waitFor: ["-"]
+  - id: inventory-service
+    name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    args: ["build", "--build-arg", "MODULE=inventory-service", "-t", "${_REGISTRY}/inventory-service:${_TAG}", "."]
+    waitFor: ["-"]
+  - id: checkout-service
+    name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    args: ["build", "--build-arg", "MODULE=checkout-service", "-t", "${_REGISTRY}/checkout-service:${_TAG}", "."]
+    waitFor: ["-"]
+  - id: payment-service
+    name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    args: ["build", "--build-arg", "MODULE=payment-service", "-t", "${_REGISTRY}/payment-service:${_TAG}", "."]
+    waitFor: ["-"]
+  - id: account-service
+    name: gcr.io/cloud-builders/docker
+    env: ["DOCKER_BUILDKIT=1"]
+    args: ["build", "--build-arg", "MODULE=account-service", "-t", "${_REGISTRY}/account-service:${_TAG}", "."]
+    waitFor: ["-"]
+  - id: web
+    name: gcr.io/cloud-builders/docker
+    args: ["build", "-t", "${_REGISTRY}/web:${_TAG}", "web"]
+    waitFor: ["-"]
+images:
+  - "${_REGISTRY}/gateway:${_TAG}"
+  - "${_REGISTRY}/catalog-service:${_TAG}"
+  - "${_REGISTRY}/inventory-service:${_TAG}"
+  - "${_REGISTRY}/checkout-service:${_TAG}"
+  - "${_REGISTRY}/payment-service:${_TAG}"
+  - "${_REGISTRY}/account-service:${_TAG}"
+  - "${_REGISTRY}/web:${_TAG}"
+options:
+  machineType: E2_HIGHCPU_8
+  logging: CLOUD_LOGGING_ONLY
+timeout: 3600s

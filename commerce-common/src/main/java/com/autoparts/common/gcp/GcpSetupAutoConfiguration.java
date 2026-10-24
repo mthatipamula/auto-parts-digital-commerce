@@ -39,7 +39,7 @@ public class GcpSetupAutoConfiguration {
     static class PubSubConfig {
         @Bean
         PubSubSetup pubSubSetup(PubSubAdmin admin, @Value("${spring.cloud.gcp.pubsub.emulator-host:}") String emulatorHost) {
-            return new PubSubSetup(admin, !emulatorHost.isBlank());
+            return new PubSubSetup(admin, !emulatorHost.isBlank() && !"false".equals(emulatorHost));
         }
     }
 }

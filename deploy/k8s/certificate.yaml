@@ -1,0 +1,7 @@
+# Google-managed TLS certificate for the storefront hostname (PUBLIC_HOST, filled in by scripts/gcp-deploy.sh).
+# Takes 15-60 minutes to become Active the first time; HTTPS fails until then.
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata: { name: web-cert, namespace: commerce }
+spec:
+  domains: [PUBLIC_HOST]

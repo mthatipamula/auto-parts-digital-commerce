@@ -1,0 +1,16 @@
+# What `gcloud builds submit` uploads. Never upload secrets or local build output.
+.git/
+.gitignore
+.env
+.gradle/
+**/build/
+**/node_modules/
+web/dist/
+.terraform/
+*.tfstate*
+*.hprof
+*.jfr
+.claude/
+.idea/
+.vscode/
+docs/screenshots/

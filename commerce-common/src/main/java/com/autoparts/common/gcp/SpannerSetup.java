@@ -12,10 +12,12 @@ import org.slf4j.LoggerFactory;
 
 import java.util.List;
 import java.util.concurrent.ExecutionException;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Creates the Spanner instance (emulator only) and the service's database and schema if they don't exist.
- * In GCP the instance comes from Terraform; databases and schema are created here on first start.
+ * In GCP the instance and (empty) databases come from Terraform; the schema is applied here on first start.
  * Schema changes after that would go through a migration tool (e.g. Liquibase's Spanner extension).
  */
 public class SpannerSetup {
@@ -25,6 +27,7 @@ public class SpannerSetup {
     private final String projectId;
     private final String instanceId;
     private final boolean emulator;
+    private static final Pattern FIRST_TABLE = Pattern.compile("CREATE\\s+TABLE\\s+(?:IF\\s+NOT\\s+EXISTS\\s+)?`?(\\w+)", Pattern.CASE_INSENSITIVE);
 
     public SpannerSetup(Spanner spanner, SpannerDatabaseAdminTemplate admin, String projectId, String instanceId, boolean emulator) {
         this.spanner = spanner;
@@ -36,9 +39,16 @@ public class SpannerSetup {
 
     public void ensure(List<String> ddl) {
         if (emulator) createEmulatorInstance();
-        if (admin.databaseExists()) return;
+        // Terraform creates GCP databases empty, so "exists" is not enough: apply the schema until its first table exists.
+        // (getTables() is no use here: it also lists information_schema tables, so it is never empty on real Spanner.)
+        if (admin.databaseExists() && admin.tableExists(firstTable(ddl))) return;
         admin.executeDdlStrings(ddl, true);
         log.info("Created Spanner database with {} DDL statements", ddl.size());
+    }
+
+    private static String firstTable(List<String> ddl) {
+        return ddl.stream().map(FIRST_TABLE::matcher).filter(Matcher::find).map(m -> m.group(1)).findFirst()
+                .orElseThrow(() -> new IllegalArgumentException("DDL has no CREATE TABLE"));
     }
 
     private void createEmulatorInstance() {

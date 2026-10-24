@@ -9,7 +9,7 @@ spring:
       emulator.enabled: ${SPANNER_EMULATOR:true}
       emulator-host: ${SPANNER_EMULATOR_HOST:localhost:9010}
     pubsub:
-      emulator-host: ${PUBSUB_EMULATOR_HOST:localhost:8085}
+      emulator-host: ${PUBSUB_EMULATOR_HOST:false}    # "false" = real Pub/Sub; compose sets the emulator
 server:
   port: ${PORT:8085}
   shutdown: graceful
