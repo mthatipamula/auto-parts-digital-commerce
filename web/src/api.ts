@@ -24,7 +24,24 @@ export interface Store { storeId: string; name: string; city: string; state: str
 export interface Step { seq: number; step: string; outcome: string; detail: string | null; at: string }
 export interface Order {
   orderId: string; status: string; storeId: string; totalCents: number; failureReason: string | null; paymentId: string | null;
-  items: { sku: string; name: string; quantity: number; unitPriceCents: number }[]; steps: Step[]; createdAt: string;
+  items: { sku: string; name: string; quantity: number; unitPriceCents: number; listPriceCents: number }[]; steps: Step[]; createdAt: string;
+  terms: Terms;
 }
-export interface OrderView { orderId: string; status: string; storeId: string; totalCents: string; itemCount: string; reason: string; updatedAt: string }
+export interface Terms { accountId: string | null; poNumber: string | null; placedBy: string | null; fulfillment: 'PICKUP' | 'DELIVERY'; paymentMethod: 'CARD' | 'ACCOUNT'; deliveryAddress: string | null }
+export interface OrderView {
+  orderId: string; status: string; storeId: string; totalCents: string; itemCount: string; reason: string; updatedAt: string;
+  poNumber?: string; placedBy?: string; fulfillment?: string; paymentMethod?: string;
+}
+
+// Pro (commercial) accounts
+export interface Account { id: string; name: string; type: string; tier: string; creditLimitCents: number; openBalanceCents: number; heldCents: number; terms: string; homeStoreId: string; deliveryAddress: string; status: string }
+export interface Member { accountId: string; userId: string; username: string; role: 'OWNER' | 'BUYER'; orderLimitCents: number }
+export interface Credit { limitCents: number; openBalanceCents: number; onHoldCents: number; availableCents: number; terms: string }
+export interface ProMe { account: Account; member: Member; credit: Credit; members: Member[] }
+export interface PriceLine { sku: string; name: string; category: string; listPriceCents: number; netPriceCents: number; rule: string }
+
+/** Account-specific net prices for a set of SKUs (contract price, else tier discount, else list). */
+export const quote = (skus: string[]) => skus.length
+  ? api<PriceLine[]>('/api/accounts/me/quote', { method: 'POST', body: JSON.stringify({ skus }) }).then((l) => Object.fromEntries(l.map((x) => [x.sku, x])))
+  : Promise.resolve({} as Record<string, PriceLine>);
 export interface Dependency { dependency: string; circuit: string; failureRate: number; bufferedCalls: number; notPermittedCalls: number; bulkheadAvailable: number; retriedCalls: number }

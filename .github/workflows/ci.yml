@@ -49,7 +49,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - run: ./scripts/init-env.sh
-      - run: docker compose up -d --build --wait --wait-timeout 300 gateway catalog-service inventory-service checkout-service payment-service
+      - run: docker compose up -d --build --wait --wait-timeout 300 gateway catalog-service inventory-service checkout-service payment-service account-service
       - run: python3 scripts/e2e.py
       - if: failure()
         run: docker compose logs --tail=200
@@ -61,7 +61,7 @@ jobs:
     runs-on: ubuntu-latest
     permissions: { contents: read, id-token: write }
     strategy:
-      matrix: { module: [gateway, catalog-service, inventory-service, checkout-service, payment-service] }
+      matrix: { module: [gateway, catalog-service, inventory-service, checkout-service, payment-service, account-service] }
     steps:
       - uses: actions/checkout@v5
       - uses: google-github-actions/auth@v3

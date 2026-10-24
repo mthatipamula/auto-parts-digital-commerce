@@ -16,3 +16,4 @@ env:
   INVENTORY_URL: http://inventory-service
   CHECKOUT_URL: http://checkout-service
   PAYMENT_URL: http://payment-service
+  ACCOUNT_URL: http://account-service

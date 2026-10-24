@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { api, money, type Part, type Vehicle } from '../api';
+import { api, money, quote, type Part, type PriceLine, type Vehicle } from '../api';
 import { users } from '../auth';
 import type { Ctx } from '../App';
 
@@ -14,6 +14,7 @@ export default function Shop({ ctx }: { ctx: Ctx }) {
   const [category, setCategory] = useState('');
   const [parts, setParts] = useState<Part[]>([]);
   const [stock, setStock] = useState<Record<string, number>>({});
+  const [net, setNet] = useState<Record<string, PriceLine>>({});
   const [msg, setMsg] = useState<string | null>(null);
 
   useEffect(() => { api<number[]>('/api/catalog/vehicles/years').then(setYears).catch((e) => setMsg(e.message)); }, []);
@@ -28,6 +29,7 @@ export default function Shop({ ctx }: { ctx: Ctx }) {
     const q = parts.map((p) => `skus=${encodeURIComponent(p.sku)}`).join('&');
     api<Record<string, number>>(`/api/inventory/availability?storeId=${ctx.store}&${q}`).then(setStock).catch(() => setStock({}));
   }, [parts, ctx.store]);
+  useEffect(() => { if (ctx.pro) quote(parts.map((p) => p.sku)).then(setNet).catch(() => setNet({})); else setNet({}); }, [parts, ctx.pro]);
 
   const add = async (sku: string) => {
     if (!ctx.user) { await users.signinRedirect(); return; }
@@ -43,7 +45,8 @@ export default function Shop({ ctx }: { ctx: Ctx }) {
   return (
     <div className="page">
       <section className="ymm card">
-        <h1>Find parts for your vehicle</h1>
+        <h1>{ctx.pro ? 'Find parts for the job' : 'Find parts for your vehicle'}</h1>
+        {ctx.pro && <p className="small muted">Showing {ctx.pro.account.name} pricing ({ctx.pro.account.tier} tier and contract prices).</p>}
         <div className="row">
           <select value={year} onChange={(e) => setYear(e.target.value ? Number(e.target.value) : '')} aria-label="Year">
             <option value="">Year</option>{years.map((y) => <option key={y}>{y}</option>)}</select>
@@ -72,7 +75,10 @@ export default function Shop({ ctx }: { ctx: Ctx }) {
                 <h3>{p.name}</h3>
                 <p className="small">{p.description}</p>
                 <div className="row between">
-                  <strong className="price">{money(p.priceCents)}</strong>
+                  {net[p.sku] && net[p.sku].netPriceCents < p.priceCents
+                    ? <span><strong className="price">{money(net[p.sku].netPriceCents)}</strong> <s className="small muted">{money(p.priceCents)}</s>
+                      <div className="small pro-rule">{net[p.sku].rule}</div></span>
+                    : <strong className="price">{money(p.priceCents)}</strong>}
                   <span className={`stock ${n ? 'in' : 'out'}`}>{n == null ? '…' : n ? `✓ ${n} at ${storeName}` : '✕ Not at this store'}</span>
                 </div>
                 <button className="primary" disabled={!n} onClick={() => add(p.sku)}>Add to cart</button>

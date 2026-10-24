@@ -8,7 +8,8 @@ import java.util.List;
  * Consumers must be idempotent: Pub/Sub delivers at least once, so eventId is used for de-duplication.
  */
 public record OrderEvent(String eventId, String type, String orderId, String customerId, String storeId,
-                         String status, long totalCents, List<Line> items, String reason, Instant occurredAt) {
+                         String status, long totalCents, List<Line> items, String reason, Instant occurredAt,
+                         String accountId, String poNumber, String placedBy, String fulfillment, String paymentMethod) {
 
     public static final String TOPIC = "order-events";
 

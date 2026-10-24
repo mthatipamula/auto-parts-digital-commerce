@@ -27,6 +27,9 @@ spring:
       - id: checkout
         uri: ${CHECKOUT_URL:http://localhost:8083}
         predicates: ["Path=/api/cart/**,/api/orders/**,/api/orders,/api/cart,/api/checkout/**"]
+      - id: accounts                        # Pro accounts; credit holds are internal (no route)
+        uri: ${ACCOUNT_URL:http://localhost:8085}
+        predicates: ["Path=/api/accounts,/api/accounts/me,/api/accounts/me/quote"]
       - id: payment-admin                   # only the fault-injection switch; authorizations stay internal
         uri: ${PAYMENT_URL:http://localhost:8084}
         predicates: [Path=/api/payments/chaos]

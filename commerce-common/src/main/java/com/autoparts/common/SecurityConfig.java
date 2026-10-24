@@ -23,7 +23,7 @@ import java.util.Map;
 
 /**
  * Zero trust: every service validates the caller's JWT itself, even behind the gateway and mesh.
- * Roles come from Keycloak realm roles: customer, associate (store staff), admin.
+ * Roles come from Keycloak realm roles: customer (B2C), pro (B2B commercial buyer), associate (store staff), admin.
  * Catalog browsing and store availability are public; everything else needs a signed-in user.
  */
 @AutoConfiguration
@@ -57,7 +57,7 @@ public class SecurityConfig {
     static Collection<GrantedAuthority> realmRoles(Jwt jwt) {
         Map<String, Object> realm = jwt.getClaimAsMap("realm_access");
         List<String> list = realm == null ? List.of() : (List<String>) realm.getOrDefault("roles", List.of());
-        return list.stream().filter(r -> List.of("customer", "associate", "admin").contains(r))
+        return list.stream().filter(r -> List.of("customer", "pro", "associate", "admin").contains(r))
                 .map(r -> (GrantedAuthority) new SimpleGrantedAuthority("ROLE_" + r)).toList();
     }
 }

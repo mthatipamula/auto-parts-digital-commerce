@@ -90,11 +90,18 @@ public class Messaging implements ApplicationRunner {
             if (rank(current) > rank(e.status())) return;
         }
         if (current != null && e.type().equals(OrderEvent.CREATED)) return;  // a later event already arrived
-        redis.opsForHash().putAll(viewKey, Map.of("orderId", e.orderId(), "status", e.status(), "storeId", e.storeId(),
+        Map<String, String> view = new java.util.HashMap<>(Map.of("orderId", e.orderId(), "status", e.status(), "storeId", e.storeId(),
                 "totalCents", Long.toString(e.totalCents()), "itemCount", Integer.toString(e.items().stream().mapToInt(OrderEvent.Line::quantity).sum()),
                 "reason", e.reason() == null ? "" : e.reason(), "updatedAt", e.occurredAt().toString()));
+        view.put("poNumber", e.poNumber() == null ? "" : e.poNumber());
+        view.put("placedBy", e.placedBy() == null ? "" : e.placedBy());
+        view.put("fulfillment", e.fulfillment() == null ? "PICKUP" : e.fulfillment());
+        view.put("paymentMethod", e.paymentMethod() == null ? "CARD" : e.paymentMethod());
+        redis.opsForHash().putAll(viewKey, view);
         redis.expire(viewKey, Duration.ofDays(90));
-        redis.opsForZSet().add("orders:" + e.customerId(), e.orderId(), -e.occurredAt().toEpochMilli() / 1000.0);
+        double score = -e.occurredAt().toEpochMilli() / 1000.0;
+        redis.opsForZSet().add("orders:" + e.customerId(), e.orderId(), score);
+        if (e.accountId() != null) redis.opsForZSet().add("account-orders:" + e.accountId(), e.orderId(), score);  // owner's view
     }
 
     private static int rank(String status) {

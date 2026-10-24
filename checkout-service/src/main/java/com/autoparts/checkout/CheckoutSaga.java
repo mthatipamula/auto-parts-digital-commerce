@@ -42,34 +42,69 @@ public class CheckoutSaga {
         this.downstream = downstream;
     }
 
+
+    /** Who is buying and how. B2C: card + pickup. Pro (B2B): account pricing, optional PO, delivery, charge to account. */
+    public record Buyer(String customerId, String username, boolean pro) {}
+
+    public record Request(String storeId, String fulfillment, String paymentMethod, String poNumber) {}
+
     record Priced(String sku, String name, long priceCents) {}
 
-    public Order checkout(String customerId, String idemKey, String storeId) {
+    record ProPrice(String sku, String name, long listPriceCents, long netPriceCents, String rule) {}
+
+    record ProAccount(Map<String, Object> account, Map<String, Object> member) {}
+
+    public Order checkout(Buyer buyer, String idemKey, Request r) {
         // A retry (double-click, network timeout) gets the original result, even though the cart is now empty.
-        Order previous = orders.byIdempotencyKey(customerId, idemKey);
+        Order previous = orders.byIdempotencyKey(buyer.customerId(), idemKey);
         if (previous != null) return previous;
 
-        Map<String, Integer> items = cart.items(customerId);
+        boolean onAccount = "ACCOUNT".equals(r.paymentMethod());
+        boolean delivery = "DELIVERY".equals(r.fulfillment());
+        if ((onAccount || delivery) && !buyer.pro()) {
+            throw new ApiException(HttpStatus.FORBIDDEN, "Charge to account and delivery are for Pro accounts");
+        }
+        Map<String, Integer> items = cart.items(buyer.customerId());
         if (items.isEmpty()) throw ApiException.badRequest("Your cart is empty");
 
-        // Price from the catalog (the authority), never from the browser.
-        List<Priced> prices = guarded("catalog", () -> downstream.call("catalog", c -> c.post().uri("/api/catalog/prices")
-                .body(Map.of("skus", List.copyOf(items.keySet()))).retrieve().body(new ParameterizedTypeReference<List<Priced>>() {})));
-        Map<String, Priced> bySku = prices.stream().collect(java.util.stream.Collectors.toMap(Priced::sku, p -> p));
-        List<Line> lines = items.entrySet().stream().map(e -> {
-            Priced p = bySku.get(e.getKey());
-            if (p == null) throw ApiException.badRequest("Part " + e.getKey() + " is no longer sold");
-            return new Line(p.sku(), p.name(), e.getValue(), p.priceCents());
-        }).toList();
+        // Prices come from the authority, never from the browser: the catalog for retail, the account service
+        // (contract price > tier discount > list) for Pro buyers.
+        List<Line> lines;
+        String accountId = null;
+        String deliveryAddress = null;
+        if (buyer.pro()) {
+            ProAccount acct = guarded("account", () -> downstream.call("account", c -> c.get().uri("/api/accounts/me").retrieve().body(ProAccount.class)));
+            accountId = String.valueOf(acct.account().get("id"));
+            deliveryAddress = delivery ? String.valueOf(acct.account().get("deliveryAddress")) : null;
+            List<ProPrice> quote = guarded("account", () -> downstream.call("account", c -> c.post().uri("/api/accounts/me/quote")
+                    .body(Map.of("skus", List.copyOf(items.keySet()))).retrieve().body(new ParameterizedTypeReference<List<ProPrice>>() {})));
+            Map<String, ProPrice> bySku = quote.stream().collect(java.util.stream.Collectors.toMap(ProPrice::sku, p -> p));
+            lines = items.entrySet().stream().map(e -> {
+                ProPrice p = bySku.get(e.getKey());
+                if (p == null) throw ApiException.badRequest("Part " + e.getKey() + " is no longer sold");
+                return new Line(p.sku(), p.name(), e.getValue(), p.netPriceCents(), p.listPriceCents());
+            }).toList();
+        } else {
+            List<Priced> prices = guarded("catalog", () -> downstream.call("catalog", c -> c.post().uri("/api/catalog/prices")
+                    .body(Map.of("skus", List.copyOf(items.keySet()))).retrieve().body(new ParameterizedTypeReference<List<Priced>>() {})));
+            Map<String, Priced> bySku = prices.stream().collect(java.util.stream.Collectors.toMap(Priced::sku, p -> p));
+            lines = items.entrySet().stream().map(e -> {
+                Priced p = bySku.get(e.getKey());
+                if (p == null) throw ApiException.badRequest("Part " + e.getKey() + " is no longer sold");
+                return new Line(p.sku(), p.name(), e.getValue(), p.priceCents(), p.priceCents());
+            }).toList();
+        }
 
-        Order order = orders.create(customerId, idemKey, storeId, lines);
+        OrderStore.Terms terms = new OrderStore.Terms(accountId, blankToNull(r.poNumber()), buyer.username(),
+                delivery ? "DELIVERY" : "PICKUP", onAccount ? "ACCOUNT" : "CARD", deliveryAddress);
+        Order order = orders.create(buyer.customerId(), idemKey, r.storeId(), lines, terms);
         if (!order.status().equals("PENDING")) return order;                // idempotent replay of a finished checkout
         String id = order.orderId();
 
-        // 1. Reserve stock at the pickup store.
+        // 1. Reserve stock at the store (pickup, or the store that delivers to the shop).
         try {
             downstream.call("inventory", c -> c.post().uri("/api/inventory/reservations")
-                    .body(Map.of("orderId", id, "storeId", storeId, "items",
+                    .body(Map.of("orderId", id, "storeId", r.storeId(), "items",
                             lines.stream().map(l -> Map.of("sku", l.sku(), "quantity", l.quantity())).toList()))
                     .retrieve().toBodilessEntity());
             orders.advance(id, "RESERVE_STOCK", "OK", null, "STOCK_RESERVED", null, null, null);
@@ -82,25 +117,42 @@ public class CheckoutSaga {
             return orders.get(id);
         }
 
-        // 2. Authorize payment.
-        String paymentId;
+        // 2. Pay: authorize the card, or place a hold on the account's credit line (B2B, Net 30).
+        String step = onAccount ? "HOLD_CREDIT" : "AUTHORIZE_PAYMENT";
+        String reference;
         try {
-            Map<?, ?> auth = downstream.call("payment", c -> c.post().uri("/api/payments/authorizations")
-                    .body(Map.of("orderId", id, "amountCents", order.totalCents())).retrieve().body(Map.class));
-            paymentId = String.valueOf(auth.get("paymentId"));
+            if (onAccount) {
+                Map<?, ?> hold = downstream.call("account", c -> c.post().uri("/api/accounts/me/credit-holds")
+                        .body(Map.of("orderId", id, "amountCents", order.totalCents())).retrieve().body(Map.class));
+                reference = "credit hold on " + hold.get("accountId");
+            } else {
+                Map<?, ?> auth = downstream.call("payment", c -> c.post().uri("/api/payments/authorizations")
+                        .body(Map.of("orderId", id, "amountCents", order.totalCents())).retrieve().body(Map.class));
+                reference = String.valueOf(auth.get("paymentId"));
+            }
         } catch (RuntimeException e) {
             boolean declined = e instanceof Business;
-            orders.advance(id, "AUTHORIZE_PAYMENT", declined ? "DECLINED" : "ERROR", describe(e), null, null, null, null);
+            orders.advance(id, step, declined ? "DECLINED" : "ERROR", describe(e), null, null, null, null);
             compensate(id);
-            orders.advance(id, "FINISH", "FAILED", null, "PAYMENT_FAILED", OrderEvent.FAILED, null,
-                    declined ? "Payment declined" : "Payment service unavailable, please retry");
+            String reason = !declined ? (onAccount ? "Account service unavailable, please retry" : "Payment service unavailable, please retry")
+                    : onAccount ? problemDetail(((Business) e).body, "Credit declined") : "Payment declined";
+            orders.advance(id, "FINISH", "FAILED", null, "PAYMENT_FAILED", OrderEvent.FAILED, null, reason);
             return orders.get(id);
         }
 
-        // 3. Confirm. Inventory commits the held stock when it sees OrderConfirmed (choreography).
-        orders.advance(id, "AUTHORIZE_PAYMENT", "OK", paymentId, "CONFIRMED", OrderEvent.CONFIRMED, paymentId, null);
-        cart.clear(customerId);
+        // 3. Confirm. Inventory commits the stock and the account service invoices the hold when they see
+        //    OrderConfirmed (choreography).
+        orders.advance(id, step, "OK", reference, "CONFIRMED", OrderEvent.CONFIRMED, onAccount ? null : reference, null);
+        cart.clear(buyer.customerId());
         return orders.get(id);
+    }
+
+    private static String blankToNull(String s) { return s == null || s.isBlank() ? null : s.trim(); }
+
+    /** The human-readable "detail" from a problem+json body, for the customer-facing reason. */
+    private static String problemDetail(String body, String fallback) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("\"detail\"\\s*:\\s*\"([^\"]+)\"").matcher(body == null ? "" : body);
+        return m.find() ? m.group(1) : fallback;
     }
 
     /** Compensation: release the stock hold. If inventory can't be reached, fall back to an event. */

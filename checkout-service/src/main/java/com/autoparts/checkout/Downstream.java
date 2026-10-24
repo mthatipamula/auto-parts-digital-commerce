@@ -58,12 +58,12 @@ public class Downstream {
 
     public Downstream(RestClient.Builder builder, CircuitBreakerRegistry breakers, RetryRegistry retries, BulkheadRegistry bulkheads,
                       @Value("${platform.services.catalog}") String catalog, @Value("${platform.services.inventory}") String inventory,
-                      @Value("${platform.services.payment}") String payment) {
+                      @Value("${platform.services.payment}") String payment, @Value("${platform.services.account}") String account) {
         this.breakers = breakers;
         this.retries = retries;
         this.bulkheads = bulkheads;
         this.clients = Map.of("catalog", client(builder, catalog, 2), "inventory", client(builder, inventory, 3),
-                "payment", client(builder, payment, 5));
+                "payment", client(builder, payment, 5), "account", client(builder, account, 3));
     }
 
     private static RestClient client(RestClient.Builder builder, String baseUrl, int timeoutSeconds) {
@@ -110,7 +110,7 @@ public class Downstream {
     public CircuitBreaker.State state(String dependency) { return breakers.circuitBreaker(dependency).getState(); }
 
     public List<Map<String, Object>> health() {
-        return List.of("catalog", "inventory", "payment").stream().map(d -> {
+        return List.of("catalog", "inventory", "payment", "account").stream().map(d -> {
             CircuitBreaker cb = breakers.circuitBreaker(d);
             Bulkhead bh = bulkheads.bulkhead(d);
             Retry r = retries.retry(d);
