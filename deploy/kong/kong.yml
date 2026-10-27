@@ -1,0 +1,88 @@
+# Kong Gateway (OSS, DB-less): the same edge policies as deploy/apigee, as one declarative file.
+#
+#   Apigee policy            Kong equivalent
+#   VA-VerifyApiKey          key-auth (x-api-key header), one consumer per calling app
+#   AM-StripApiKey           key-auth hide_credentials: the key never reaches the backend
+#   Q-QuotaPerApp            rate-limiting per consumer, counters shared in Valkey (distributed)
+#   SA-SpikeArrest           rate-limiting per second on the storefront consumer
+#   CORS-Storefront          cors
+#   RF-NotFound (internal)   allow-list routes: anything not listed (reservations, payment authorizations,
+#                            credit holds) has no route, so Kong answers 404 before the backend is called
+#
+# Behind Kong nothing changes: Spring Cloud Gateway still validates the user's JWT, routes, rate-limits per user and
+# applies circuit breakers. Kong identifies the calling *app*; the bearer token identifies the *user*.
+#
+# API keys come from .env: compose fills in ${KONG_STOREFRONT_KEY} / ${KONG_PARTNER_KEY} when Kong starts, so no key is
+# committed (key-auth credentials aren't vault-referenceable in Kong OSS).
+_format_version: "3.0"
+
+services:
+  - name: commerce-api
+    url: http://gateway:8080
+    connect_timeout: 2000
+    read_timeout: 30000
+    write_timeout: 30000
+    routes:
+      - name: catalog
+        paths: [/api/catalog]
+        strip_path: false
+      - name: inventory-public
+        paths: ["~/api/inventory/(stores|availability)$"]
+        strip_path: false
+      - name: cart-orders-checkout
+        paths: [/api/cart, /api/orders, /api/checkout]
+        strip_path: false
+      - name: accounts
+        paths: ["~/api/accounts(/me(/quote)?)?$"]
+        strip_path: false
+      - name: payment-admin            # only the fault-injection switch; authorizations stay internal
+        paths: ["~/api/payments/chaos$"]
+        strip_path: false
+    plugins:
+      - name: key-auth
+        config:
+          key_names: [x-api-key]
+          hide_credentials: true
+      - name: cors
+        config:
+          origins: [http://localhost:5173]
+          methods: [GET, PUT, POST, DELETE]
+          headers: [authorization, content-type, idempotency-key, x-api-key]
+          max_age: 3600
+          credentials: false
+
+consumers:
+  - username: storefront               # first-party web app (the nginx in front adds its key)
+    keyauth_credentials:
+      - key: "${KONG_STOREFRONT_KEY}"
+    plugins:
+      - name: rate-limiting
+        config:
+          second: 100                  # spike arrest
+          hour: 10000                  # quota
+          policy: redis
+          redis: { host: valkey, port: 6379 }
+          fault_tolerant: true         # if Valkey is down, let traffic through rather than fail closed
+  - username: partner-fleet-app        # a third-party partner app: much smaller quota
+    keyauth_credentials:
+      - key: "${KONG_PARTNER_KEY}"
+    plugins:
+      - name: rate-limiting
+        config:
+          minute: 10
+          policy: redis
+          redis: { host: valkey, port: 6379 }
+          fault_tolerant: true
+
+plugins:
+  # Every request through Kong starts a trace; the W3C traceparent header carries it into the gateway and services,
+  # so Grafana shows one waterfall: kong -> gateway -> checkout -> inventory / payment.
+  - name: opentelemetry
+    config:
+      traces_endpoint: http://otel-lgtm:4318/v1/traces
+      resource_attributes:
+        service.name: kong
+      propagation:
+        default_format: w3c
+        extract: [w3c]
+        inject: [w3c]

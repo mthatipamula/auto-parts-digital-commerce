@@ -125,7 +125,35 @@ services:
     healthcheck: *health
     ports: ["127.0.0.1:8080:8080"]
 
-  web:          # storefront; nginx proxies /api to the gateway (same origin, no CORS)
+  kong:         # edge API gateway (Kong OSS, DB-less): API keys per app, quotas, CORS, internal paths blocked
+    image: kong:3.9.1
+    # Fill the API keys from .env into the declarative config, then start Kong as usual.
+    entrypoint: ["sh", "-c", "sed -e \"s|\\$${KONG_STOREFRONT_KEY}|$$KONG_STOREFRONT_KEY|\" -e \"s|\\$${KONG_PARTNER_KEY}|$$KONG_PARTNER_KEY|\" /kong/kong.yml > /tmp/kong.yml && exec /docker-entrypoint.sh kong docker-start"]
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /tmp/kong.yml
+      KONG_STOREFRONT_KEY: ${KONG_STOREFRONT_KEY:?run ./scripts/init-env.sh}
+      KONG_PARTNER_KEY: ${KONG_PARTNER_KEY:?run ./scripts/init-env.sh}
+      # One readable line per request: docker compose logs -f kong
+      KONG_NGINX_HTTP_LOG_FORMAT: "kong_demo '$$time_local | $$request_method $$request_uri | status=$$status | upstream=$$upstream_status $${upstream_response_time}s | total=$${request_time}s | id=$$kong_request_id'"
+      KONG_PROXY_ACCESS_LOG: /dev/stdout kong_demo
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_LISTEN: 0.0.0.0:8002
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+      KONG_ADMIN_GUI_API_URL: http://localhost:8001
+      KONG_TRACING_INSTRUMENTATIONS: request,balancer,plugin_access
+      KONG_TRACING_SAMPLING_RATE: "1.0"
+    volumes: ["./deploy/kong/kong.yml:/kong/kong.yml:ro"]
+    depends_on: { gateway: { condition: service_started }, valkey: { condition: service_healthy }, otel-lgtm: { condition: service_started } }
+    healthcheck: { test: ["CMD", "kong", "health"], interval: 5s, retries: 30 }
+    # proxy (partner apps, curl), Admin API, Kong Manager UI; loopback only (the Admin API has no auth)
+    ports: ["127.0.0.1:8000:8000", "127.0.0.1:8001:8001", "127.0.0.1:8002:8002"]
+
+  web:          # storefront; nginx proxies /api to Kong (same origin, no CORS), adding the storefront's API key
     build: { context: ./web }
-    depends_on: [gateway]
+    depends_on: [kong]
+    environment:
+      KONG_STOREFRONT_KEY: ${KONG_STOREFRONT_KEY:?run ./scripts/init-env.sh}
+    volumes: ["./deploy/kong/storefront-nginx.conf.template:/etc/nginx/templates/default.conf.template:ro"]
     ports: ["127.0.0.1:5173:8080"]

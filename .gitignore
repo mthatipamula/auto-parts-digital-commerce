@@ -11,3 +11,6 @@ dist/
 .terraform/
 *.tfstate*
 .claude/
+
+# macOS Finder metadata
+.DS_Store

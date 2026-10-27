@@ -16,7 +16,8 @@ and deployed with **Helm**.
 
 ```
 Browser / mobile / partners
-   │  Apigee (API key, spike arrest, per-app quota, CORS)            deploy/apigee
+   │  Apigee on GCP (deploy/apigee) or Kong locally (deploy/kong):
+   │  API key per app, spike arrest, per-app quota, CORS, internal paths blocked
    ▼
 gateway  (Spring Cloud Gateway: JWT, per-user rate limit in Valkey, circuit breaker on catalog, no internal routes)
    │
@@ -47,7 +48,7 @@ Pub/Sub topic order-events (ordering key = order ID, DLQ)
 | **Spanner** | Interleaved tables, covering index (`STORING`), UUID keys (no hotspots), read-write transactions to prevent overselling, stale reads for availability |
 | **Memorystore (Valkey)** | Cart, catalog cache-aside with TTL (degrades gracefully), CQRS read model, gateway rate limiting |
 | **GCS** | Product images (`CatalogSeeder`), public bucket with versioning in Terraform |
-| **Apigee** | `deploy/apigee`: VerifyAPIKey, SpikeArrest, Quota per app, CORS, internal paths blocked |
+| **Apigee** (and **Kong**) | `deploy/apigee`: VerifyAPIKey, SpikeArrest, Quota per app, CORS, internal paths blocked. The same policies on Kong in `deploy/kong/kong.yml`, running locally ([Kong at the edge](#kong-at-the-edge-local)) |
 | **OAuth2/OIDC, zero trust** | Every service validates the JWT (`SecurityConfig`); roles customer / associate / admin; Istio STRICT mTLS + AuthorizationPolicies by service identity (`deploy/istio`) |
 | **GKE, Helm, Terraform, CI/CD** | `deploy/helm` (one chart, values per service, Workload Identity, probes, HPA, PDB, zone spreading); `deploy/terraform`; `.github/workflows/ci.yml` |
 | **Observability** | OpenTelemetry traces and metrics → Grafana (Tempo/Prometheus); Resilience4j state on `/actuator` and the Ops page; SLO thresholds in `loadtest/` |
@@ -58,8 +59,8 @@ Pub/Sub topic order-events (ordering key = order ID, DLQ)
 Requires Docker (about 6 GB of RAM for the stack).
 
 ```bash
-./scripts/init-env.sh                 # random demo passwords into .env
-docker compose up -d --build          # emulators, Valkey, Keycloak, Grafana, 6 services, storefront
+./scripts/init-env.sh                 # random demo passwords and Kong API keys into .env
+docker compose up -d --build          # emulators, Valkey, Keycloak, Grafana, Kong, 6 services, storefront
 python3 scripts/e2e.py                # 31 end-to-end checks (retail + Pro)
 ```
 
@@ -67,7 +68,9 @@ python3 scripts/e2e.py                # 31 end-to-end checks (retail + Pro)
 |---|---|
 | http://localhost:5173 | Storefront. Retail: `customer`. Pro: `rick`, `jordan`, `mike`. Staff: `associate`, `admin` (passwords in `.env`) |
 | http://localhost:5173/#/ops | (admin) live circuit breakers + payment fault injection |
-| http://localhost:3000 | Grafana: traces across gateway → checkout → inventory / payment |
+| http://localhost:3000 | Grafana: traces across kong → gateway → checkout → inventory / payment |
+| http://localhost:8002 | Kong Manager: routes, plugins and consumers (read-only in DB-less mode) |
+| http://localhost:8000 | Kong proxy, for partner-app calls (`./scripts/kong-demo.sh`) |
 
 ## Demo script (5 minutes)
 
@@ -77,6 +80,49 @@ python3 scripts/e2e.py                # 31 end-to-end checks (retail + Pro)
 4. **Failure + compensation:** Ops page → payment failure rate 1.0 → order → `PAYMENT_FAILED` with `RELEASE_STOCK: OK`.
 5. **Circuit breaker:** a few more orders → payment circuit **OPEN**, calls fail fast; reset → half-open → closed.
 6. **JVM:** `docs/jvm-diagnostics.md` lab: heap dump of a leak, flame graph of a hot loop, thread dump of contention.
+
+## Kong at the edge (local)
+
+Locally, Kong (OSS 3.9, DB-less) plays Apigee's role in front of Spring Cloud Gateway, with the same policies as one
+declarative file, [`deploy/kong/kong.yml`](deploy/kong/kong.yml):
+
+```
+browser ──► nginx (storefront, adds the storefront's API key) ──► Kong :8000 ──► gateway :8080 ──► services
+partner app (curl) ─────────────────────────────────────────────►┘
+```
+
+| Apigee policy | Kong |
+|---|---|
+| VerifyAPIKey (`x-api-key`) | `key-auth`; consumers `storefront` and `partner-fleet-app`, keys from `.env` |
+| AM-StripApiKey | `key-auth` `hide_credentials`: the key never reaches the backend |
+| SpikeArrest + Quota per app | `rate-limiting` per consumer (storefront 100/s and 10,000/h; partner 10/min), counters in Valkey |
+| CORS | `cors` |
+| RaiseFault on internal paths | Allow-list routes: reservations, payment authorizations and credit holds have no route → 404 |
+| (Apigee analytics) | `opentelemetry`: each request starts a trace that continues through the gateway and services |
+
+Kong identifies the calling **app**; the bearer token still identifies the **user**, and the gateway and every service
+still validate it. Moving from Apigee to Kong only changes this top layer.
+
+**Demo (about 3 minutes):**
+
+1. Terminal 1, watch requests arrive (one line each: method, path, status, upstream time, request id):
+   ```bash
+   docker compose logs -f kong
+   ```
+2. Use the storefront (http://localhost:5173): every API call shows up in terminal 1. In the browser's DevTools →
+   Network, responses carry `Via: kong`, `X-Kong-Upstream-Latency`, `X-Kong-Request-Id` and `RateLimit-Remaining`.
+3. Terminal 2, call the API as a partner app:
+   ```bash
+   ./scripts/kong-demo.sh
+   ```
+   No key → 401, wrong key → 401, partner key → 200 with quota headers, internal path → 404, burst past the
+   10/minute quota → 429.
+4. Grafana → Explore → Tempo → Service name `kong`: one trace from Kong (cors → key-auth → rate-limiting) through the
+   gateway into the services.
+5. Kong Manager (http://localhost:8002): the service, routes, plugins and the two consumers.
+
+After pulling this change, run `./scripts/init-env.sh` once (it adds the two Kong keys to an existing `.env`), then
+`docker compose up -d --build web kong`. The e2e script and load test call the gateway directly, as before.
 
 ## Pro (B2B) accounts
 
