@@ -14,6 +14,105 @@ and deployed with **Helm**.
 
 ## Architecture
 
+```mermaid
+flowchart TB
+    subgraph CLIENTS["Clients"]
+        BROWSER["🌐 Web browser<br/>React storefront"]
+        PARTNER["📱 Partner / mobile apps"]
+    end
+
+    subgraph EDGE["Edge"]
+        WAF["🛡️ Cloud Armor WAF<br/>GCP · planned"]
+        LB["⚖️ Google Cloud Load Balancer<br/>GKE Ingress · managed TLS"]
+        NGINX["nginx<br/>serves React · proxies /api · adds app API key"]
+        KONG["🦍 Kong · local / Apigee · GCP<br/>API key · per-app quota · CORS · internal paths 404"]
+    end
+
+    KEYCLOAK["🔑 Keycloak<br/>OIDC login · PKCE · JWT"]
+
+    GATEWAY["🚪 Spring Cloud Gateway<br/>JWT check · per-user rate limit · routing · circuit breaker"]
+
+    subgraph SERVICES["Microservices · Java 21 / Spring Boot · Istio mTLS on GKE"]
+        CATALOG["📦 catalog-service<br/>year / make / model · parts"]
+        INVENTORY["🏬 inventory-service<br/>store stock · reservations"]
+        CHECKOUT["🛒 checkout-service<br/>cart · saga orchestrator · outbox"]
+        PAYMENT["💳 payment-service<br/>card authorize · idempotent"]
+        ACCOUNT["🏢 account-service<br/>Pro accounts · Net 30 credit holds"]
+    end
+
+    subgraph DATA["Data"]
+        SPANNER[("🗄️ Cloud Spanner")]
+        VALKEY[("⚡ Valkey / Memorystore<br/>cache · cart · rate limits · order history")]
+        GCS[("🖼️ Cloud Storage<br/>part images")]
+    end
+
+    PUBSUB{{"📨 Pub/Sub · order-events<br/>ordering key · DLQ"}}
+
+    subgraph OBS["Observability · OpenTelemetry"]
+        OTEL["OTel Collector"]
+        PROM[("📈 Prometheus<br/>metrics")]
+        TEMPO[("🔍 Tempo<br/>traces")]
+        LOKI[("📜 Loki<br/>logs")]
+        GRAFANA["📊 Grafana<br/>Health status dashboard"]
+    end
+
+    BROWSER --> WAF
+    PARTNER --> WAF
+    WAF --> LB
+    LB --> NGINX
+    NGINX -->|s28| KEYCLOAK
+    NGINX -->|s29| KONG
+    KONG --> GATEWAY
+    GATEWAY --> CATALOG
+    GATEWAY --> INVENTORY
+    GATEWAY --> CHECKOUT
+    GATEWAY --> ACCOUNT
+    CHECKOUT -->|s30| CATALOG
+    CHECKOUT -->|s31| INVENTORY
+    CHECKOUT -->|s32| PAYMENT
+    CHECKOUT -->|s33| ACCOUNT
+    CATALOG --> SPANNER
+    CATALOG --> VALKEY
+    CATALOG --> GCS
+    INVENTORY --> SPANNER
+    ACCOUNT --> SPANNER
+    CHECKOUT --> SPANNER
+    CHECKOUT --> VALKEY
+    CHECKOUT -->|s34| PUBSUB
+    PUBSUB -. "commit / release stock" .-> INVENTORY
+    PUBSUB -. "order history (CQRS)" .-> CHECKOUT
+    PUBSUB -. "capture / release hold" .-> ACCOUNT
+    SERVICES -. "OTLP metrics + traces" .-> OTEL
+    KONG -. "traces" .-> OTEL
+    OTEL --> PROM
+    OTEL --> TEMPO
+    OTEL --> LOKI
+    PROM --> GRAFANA
+    TEMPO --> GRAFANA
+    LOKI --> GRAFANA
+
+    classDef client fill:#dbeafe,stroke:#2563eb,color:#1e3a8a
+    classDef security fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    classDef edge fill:#ffedd5,stroke:#ea580c,color:#7c2d12
+    classDef gateway fill:#fef9c3,stroke:#ca8a04,color:#713f12
+    classDef service fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef data fill:#ede9fe,stroke:#7c3aed,color:#4c1d95
+    classDef messaging fill:#fce7f3,stroke:#db2777,color:#831843
+    classDef obs fill:#cffafe,stroke:#0891b2,color:#164e63
+
+    class BROWSER,PARTNER client
+    class WAF,KEYCLOAK security
+    class LB,NGINX,KONG edge
+    class GATEWAY gateway
+    class CATALOG,INVENTORY,CHECKOUT,PAYMENT,ACCOUNT service
+    class SPANNER,VALKEY,GCS data
+    class PUBSUB messaging
+    class OTEL,PROM,TEMPO,LOKI,GRAFANA obs
+```
+
+Locally (`docker compose`) the edge is browser → nginx → Kong, and Spanner, Pub/Sub and GCS run as emulators. On GKE the
+Google Cloud Load Balancer sits in front of nginx; Cloud Armor and Kong on GKE are production follow-ups.
+
 ```
 Browser / mobile / partners
    │  Apigee on GCP (deploy/apigee) or Kong locally (deploy/kong):
